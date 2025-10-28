@@ -8,16 +8,12 @@
 # Add verification (SymPy / pytest)
 # Run self-play or SFT
 # """"
-# TL;DR – What You Must Build
-#
-# 5 things:
-#
-# Seed triples (c, z, x)
-# Rationale model qφ(z|c,x)
-# Prompt model pθ(x|z,c)
-# EM loop with reward
-# Self-play or SFT with verification
+# Components:
+# 1. Seed triplets (c, z, x)
+# 2. Rationale model qφ(z|c,x)
+# 3. Prompt model pθ(x|z,c)
+# 4. EM loop with reward
+# 5. Self-play or SFT with verification
 # """"
-
 
 # 1. Seed triplets
