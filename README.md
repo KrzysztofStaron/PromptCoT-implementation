@@ -1,50 +1,75 @@
-<img src="https://github.com/inclusionAI/PromptCoT/assets/12345678/abc123.png" width="100" align="right" />
+# PromptCoT: Synthetic Dataset Generation for Reasoning Models
 
-# PromptCoT 2.0: Scaling Prompt Synthesis for Large Language Model Reasoning
+A comprehensive approach to generating high-quality synthetic datasets for mathematical and coding reasoning models.
 
-**Official Implementation**  
-`arXiv:2509.19894` | [Paper PDF](https://arxiv.org/pdf/2509.19894) | [GitHub](https://github.com/inclusionAI/PromptCoT)
+## Overview
 
----
+This project implements a systematic pipeline for creating Olympiad-level mathematical problems and training reasoning models through a multi-stage process involving concept-guided problem synthesis, rationale generation, and iterative refinement.
 
-## TL;DR
+## Architecture
 
-> **PromptCoT 2.0 is a fully learnable, scalable framework that generates Olympiad-level math and competitive programming problems using an EM-optimized rationale-driven synthesis pipeline — producing harder, more diverse synthetic datasets than human-curated ones.**
+### 1. Seed Data: (c, z, x) Triples
 
-It enables **two training regimes**:
+**Purpose**: Create a foundational dataset for generating Olympiad-level math questions
 
-- **Self-Play**: Strong models (30B+) improve autonomously via RL (PPO/GRPO) on verifiable problems.
-- **SFT**: Weaker models (7B) learn from teacher-distilled reasoning traces.
+**Structure**:
 
-**Results**:
-
-- **+4.4 on AIME 24**, **+5.3 on HMMT**, **+35 Elo on Codeforces** (30B scale)
-- **7B model reaches 73.1 on AIME 24** using **only synthetic data**
-
----
-
-## Why PromptCoT 2.0?
-
-| Problem                                        | Solution                                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------- |
-| Human data is **expensive & limited**          | **Infinite**, **hard**, **verifiable** synthetic problems           |
-| Existing synthetic data is **too easy/narrow** | **Rationale-guided**, **EM-refined**, **distributionally distinct** |
-| Hand-crafted prompts don’t scale               | **Fully learnable**, **domain-agnostic**                            |
-
-> _“Prompt synthesis is a new axis for scaling reasoning.”_ — **PromptCoT 2.0**
-
----
-
-## Architecture Overview
-
-```mermaid
-graph TD
-    A[Seed Triples (c, z, x)] --> B[Train qφ(z|c,x) & pθ(x|z,c)]
-    B --> C[EM Loop: E-step → M-step]
-    C --> D[Generate 100k+ (c, z, x)]
-    D --> E{Post-Training}
-    E -->|Self-Play| F[Strong LLM + PPO + SymPy/pytest]
-    E -->|SFT| G[Teacher → Full Trace → Student]
-    F --> H[SOTA 30B Model]
-    G --> I[73.1 AIME 7B Model]
+```json
+{
+  "concepts": ["exponents", "modular arithmetic"],
+  "rationale": "Use lifting-the-exponent lemma on x^n + 1...",
+  "problem": "Find the smallest odd prime factor of 2019^8 + 1."
+}
 ```
+
+### 2. Rationale Model: qφ(z|c,x)
+
+**Training**: Fine-tune a model on seed triples (c, z, x)
+
+**Function**: Predict optimal thinking plan
+
+- **Input**: (concepts, problem)
+- **Output**: rationale
+
+### 3. Prompt Generator: pθ(x|z,c)
+
+**Training**: Fine-tune a model on rationale and problem pairs
+
+**Function**: Generate challenging problems
+
+- **Input**: (concepts, rationale)
+- **Output**: problem
+
+### 4. EM Loop with Reward-Based Selection
+
+**E-step**: Generate 8 rationales, calculate rewards, select the best one
+
+**M-step**: Train pθ(x|z,c) on new (c, z_best, x) triples
+
+**Reward Function**:
+
+```
+log_p_z = -loss_rationale_model(c, z)
+log_p_x = -loss_prompt_model(c + z, x)
+reward = log_p_z + log_p_x
+```
+
+### 5. Post-Training: Self-Play or SFT
+
+#### A. Self-Play Approach
+
+**Goal**: Push state-of-the-art performance for strong models
+
+**Method**: Run a strong model through PPO/GRPO loop
+
+- Solved synthetic problem → +1 reward
+- Unsolved problem → 0 reward
+
+#### B. Supervised Fine-Tuning (SFT)
+
+**Goal**: Improve weaker models through knowledge distillation
+
+**Method**: Weaker models learn from teacher-distilled traces
+
+- Smaller models learn rationales from stronger models
+- Focus on understanding problem-solving strategies
