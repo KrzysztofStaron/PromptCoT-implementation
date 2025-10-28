@@ -1,0 +1,28 @@
+This paper has a concept of 2 models, both needing triplets of data:
+
+qφ(z|c,x) and pθ(x|z,c)
+c - Concepts
+z - Rationale
+x - Problem
+
+We need a seed dataset, to pre-train them, before the actual science
+
+So I took aime25, aime24... and got the
+(Problem, solution) pairs
+
+Then, I took math concepts from:
+https://github.com/inclusionAI/PromptCoT/blob/main/PromptCoT_1.0/data/mathematics_concepts.jsonl
+
+Used them for in-context training for gpt-5 generating seed dataset:
+
+Generated 253 datapoints, paid $1.83.
+
+100–1,000 high-quality (c, z, x) triples should be sufficient to kickstart the EM loop. 253 is well within that range.
+
+The problem is that these seed triples will compound, they need to be excellent. I can’t do AIME 25-level math, so generation is the obvious way.
+
+If this part of the project turns out to be troublesome, I’ll try multi-model approaches, where multiple state-of-the-art models generate reasoning discriminated by a simple reward function.
+
+Maybe there are yt videos explaining some of those problems, if so then by using their transcripts it is possible to generate better reasoning
+
+But since this is only the very beginning, there’s no need to overengineer things. That’s why GPT-5 was used.
