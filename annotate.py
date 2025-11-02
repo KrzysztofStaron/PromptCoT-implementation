@@ -3,7 +3,8 @@ import json
 # For now all it does is prepare the data for finetuning
 
 def write_jsonl(data, filename):
-    """Write data to a JSONL file"""
+    """Write da
+    .a to a JSONL file"""
     with open(filename, 'w') as f:
         for item in data:
             f.write(json.dumps(item) + '\n')

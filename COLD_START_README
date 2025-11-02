@@ -1,0 +1,35 @@
+Implementing PromptCoT: cold-start
+
+Last time, I built the seed dataset for fine-tuning Qwen2.5-7B-Instruct.
+Now I’ve moved on to LoRA fine-tuning, and we finally have two working models:
+
+- Rationale Model - qφ(z | c, x)
+  Given the concepts and the problem, what is the best thinking plan?
+
+- Prompt Model - pθ(x | z, c)
+  Given the concepts and the thinking plan, write a hard problem.
+
+Only two steps remain to complete the full implementation:
+
+- The EM loop
+- Self-play / SFT
+
+There's something deeply satisfying about moving gigabytes of data through an A100.
+
+z - rationale
+c - concepts
+x - problem
+
+While this nomenlature is pretty confusing, I'm using the exact one as in the paper:
+https://arxiv.org/pdf/2509.19894
+
+One more thing: qφ(z | c, x)
+
+Just means we have a model of a name qφ that predicts "z" when given "c, x"
+
+Weights:
+qφ(z | c, x); Rationale Model
+https://huggingface.co/PanzerBread/promptCoT-rationale
+
+pθ(x | z, c); Prompt Model
+https://huggingface.co/PanzerBread/promptCoT-prompt
