@@ -1,7 +1,7 @@
-# em.py — FINAL, FAST, COMPILED, RUNNING ON H200
+# em.py — FINAL, RUNNING ON H200
 import json
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
 from datasets import Dataset
 from peft import PeftModel
 import os
@@ -14,16 +14,15 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 HF_USERNAME = "PanzerBread/promptcot-"
 
 os.environ["WANDB_DISABLED"] = "true"
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 # === CONFIG ===
 MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 SEED_FILE = "./data/annotated.jsonl"
 EM_ITERS = 10
-K_SAMPLES = 3  # Reduced for speed
-BATCH_SIZE = 8  # Batched for speed
-USE_COMPILE = True if torch.cuda.get_device_capability()[0] >= 8 else False  # H200 = True
+K_SAMPLES = 4
+BATCH_SIZE = 8
 
 # === TOKENIZER ===
 log.info("Loading tokenizer...")
@@ -46,15 +45,8 @@ base = AutoModelForCausalLM.from_pretrained(
 
 log.info("Loading pθ...")
 pθ = PeftModel.from_pretrained(base, "./models/prompt_model", is_trainable=True)
-
 log.info("Loading qφ...")
 qφ = PeftModel.from_pretrained(base, "./models/rationale_model", is_trainable=True)
-
-# === COMPILE FOR SPEED (H200) ===
-if USE_COMPILE:
-    log.info("Compiling models for 50% speedup...")
-    pθ = torch.compile(pθ, mode="reduce-overhead", fullgraph=True)
-    qφ = torch.compile(qφ, mode="reduce-overhead", fullgraph=True)
 
 # === SEED ===
 with open(SEED_FILE) as f:
@@ -67,11 +59,10 @@ def compute_reward(pθ, c, x, z):
         input_x = tokenizer(f"Concepts: {' | '.join(c)}\nRationale: {z}\nProblem: {x}", return_tensors="pt").to(pθ.device)
         loss = pθ(**input_x, labels=input_x["input_ids"]).loss
         return -loss.item()
-    except Exception as e:
-        log.warning(f"Reward error: {e}")
+    except:
         return -100
 
-# === BATCHED E-STEP (FAST) ===
+# === BATCHED E-STEP (FIXED) ===
 def batched_e_step(qφ, batch_c, batch_x):
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
     inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(qφ.device)
@@ -102,15 +93,38 @@ def batched_e_step(qφ, batch_c, batch_x):
 
 # === M-STEP ===
 def m_step(model, triples, mode):
+    log.info(f"Starting M-step for {mode} model with {len(triples)} triples")
     texts = []
-    for t in triples:
+    for idx, t in enumerate(triples):
+        if idx % 50 == 0:
+            log.info(f"  Formatting triple {idx}/{len(triples)}")
         text = f"Concepts: {' | '.join(t['concepts'])}\nRationale: {t['rationale']}\nProblem: {t['problem']}" if mode == "prompt" else \
                f"Concepts: {' | '.join(t['concepts'])}\nProblem: {t['problem']}\nRationale: {t['rationale']}"
         texts.append({"text": text})
     
+    log.info("Creating dataset...")
     ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=512), batched=True)
-    trainer = Trainer(model=model, args=TrainingArguments(output_dir="temp", per_device_train_batch_size=2, num_train_epochs=1, bf16=True, report_to="none"), train_dataset=ds)
+    log.info("Dataset ready. Starting training...")
+
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=TrainingArguments(
+            output_dir="temp",
+            per_device_train_batch_size=2,
+            num_train_epochs=1,
+            bf16=True,
+            report_to="none"
+        ),
+        train_dataset=ds,
+        data_collator=data_collator  # ← CRITICAL FIX: Pad dynamically for LM
+    )
     trainer.train()
+    log.info(f"M-step for {mode} complete")
 
 # === HF UPLOAD (2 REPOS) ===
 def upload_checkpoint(pθ, qφ, iter_num):
@@ -151,20 +165,16 @@ for em_iter in range(EM_ITERS):
                 best_z = max(z_list, key=lambda z: compute_reward(pθ, c, x, z))
                 new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
             batch_c, batch_x = [], []
-    
-    # Handle remainder
+
+    # Process remaining batch if any
     if batch_c:
         z_cands = batched_e_step(qφ, batch_c, batch_x)
         for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
             best_z = max(z_list, key=lambda z: compute_reward(pθ, c, x, z))
             new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
-
-    log.info("M-Step: Training pθ...")
+    
     m_step(pθ, new_triples, "prompt")
-
-    log.info("M-Step: Training qφ...")
     m_step(qφ, new_triples, "rationale")
-
     current_triples = new_triples
     upload_checkpoint(pθ, qφ, em_iter)
 
