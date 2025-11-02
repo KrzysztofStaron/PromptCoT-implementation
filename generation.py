@@ -1,4 +1,4 @@
-# generate_fixed.py — PROMPTCoT 2.0 CORRECT INFERENCE
+# generation.py — PROMPTCoT: Generate z (rationale) and x (problem) from c (concepts)
 import json
 import torch
 import random
@@ -14,9 +14,11 @@ base = AutoModelForCausalLM.from_pretrained(
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct", padding_side='left')
 tokenizer.pad_token = tokenizer.eos_token
 
-# Load the prompt generation model pθ(x | c)
-# Generates problems directly from concepts
-pθ = PeftModel.from_pretrained(base, "PanzerBread/promptcot-p", subfolder="latest")
+# Load the prompt generation model prompt_model
+# Trained to generate: Concepts -> Rationale, Problem
+# So it can generate both z and x from c
+prompt_model = PeftModel.from_pretrained(base, "./models/prompt_model", is_trainable=False)
+prompt_model.eval()
 
 # Load concept pool from mathematics_concepts dataset (more diverse)
 concepts = set()
@@ -34,43 +36,57 @@ for i in range(N):
     c = random.sample(concepts, 3)
     c_str = " | ".join(c)
 
-    problem_prompt = f"""You are a world-class math and coding problem generator.
-
-Concepts: {c_str}
-
-Generate ONE hard, original, verifiable reasoning problem that REQUIRES the above concepts.
-- Math: Must end with "Put your final answer within \\boxed{{}}."
-- NEVER write the solution.
-- NEVER include assistant tokens.
-- Keep under 250 words.
-- Output ONLY the problem text.
-
-Problem:"""
-
-    inputs = tokenizer(problem_prompt, return_tensors="pt").to(pθ.device)
-    x_ids = pθ.generate(
-        **inputs,
-        max_new_tokens=384,
-        do_sample=True,
-        temperature=0.7,
-        top_p=0.95,
-        eos_token_id=tokenizer.eos_token_id
-    )
-    x_text = tokenizer.decode(x_ids[0], skip_special_tokens=True)
-    x = x_text.split("Problem:")[-1].strip()
+    # Generate both rationale (z) and problem (x) from concepts (c)
+    # Format matches training: "Concepts: {c}\nRationale:" -> model generates z, then "\nProblem:", then x
+    prompt = f"Concepts: {c_str}\nRationale:"
+    
+    inputs = tokenizer(prompt, return_tensors="pt").to(prompt_model.device)
+    
+    with torch.no_grad():
+        # Generate full sequence: rationale + problem
+        output_ids = prompt_model.generate(
+            **inputs,
+            max_new_tokens=384,  # Enough for both rationale and problem
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.eos_token_id
+        )
+    
+    # Decode full output
+    full_output = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    
+    # Extract rationale (z) - everything after "Rationale:" and before "Problem:"
+    if "Problem:" in full_output:
+        z = full_output.split("Rationale:")[-1].split("Problem:")[0].strip()
+        # Extract problem (x) - everything after "Problem:"
+        x = full_output.split("Problem:")[-1].strip()
+    else:
+        # If model didn't generate "Problem:", take everything after "Rationale:" as rationale
+        # and skip problem generation for this sample
+        z = full_output.split("Rationale:")[-1].strip()
+        x = ""
+        print(f"Warning: Generated {i+1} did not produce Problem section")
     
     # Clean up: stop at any chat formatting tokens
     if "<" in x:
         x = x.split("<")[0].strip()
+    if "<" in z:
+        z = z.split("<")[0].strip()
 
     data.append({
         "concepts": c,
+        "rationale": z,
         "problem": x
     })
 
-    print(f"Generated {i+1}/{N}")
+    print(f"Generated {i+1}/{N}: rationale length={len(z)}, problem length={len(x)}")
 
 # Final save
-with open("synthetic_10.jsonl", "w") as f:
+output_file = "synthetic_generated.jsonl"
+with open(output_file, "w") as f:
     for item in data:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+print(f"\nSaved {len(data)} generated (c, z, x) triples to {output_file}")
