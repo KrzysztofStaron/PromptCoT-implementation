@@ -20,9 +20,13 @@ log = logging.getLogger(__name__)
 # === CONFIG ===
 MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 SEED_FILE = "./data/annotated.jsonl"
+CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 10
 K_SAMPLES = 8
-BATCH_SIZE = 8
+BATCH_SIZE = 16
+
+# Create checkpoint directory if it doesn't exist
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # Initialize wandb
 try:
@@ -36,7 +40,10 @@ try:
             "em_iters": EM_ITERS,
         }
     )
-    log.info("✅ Wandb initialized successfully. View logs at: https://wandb.ai")
+    # Define custom metrics (optional, helps with organization in UI)
+    wandb.define_metric("em_iteration")
+    log.info(f"✅ Wandb initialized successfully. Run: {wandb.run.name if wandb.run else 'N/A'}")
+    log.info(f"✅ View logs at: {wandb.run.url if wandb.run else 'N/A'}")
 except Exception as e:
     log.warning(f"⚠️  Failed to initialize wandb: {e}. Continuing without wandb logging.")
     wandb = None
@@ -65,10 +72,60 @@ pθ = PeftModel.from_pretrained(base, "./models/prompt_model", is_trainable=True
 log.info("Loading qφ...")
 qφ = PeftModel.from_pretrained(base, "./models/rationale_model", is_trainable=True)
 
-# === SEED ===
-with open(SEED_FILE) as f:
-    current_triples = [json.loads(line) for line in f]
-log.info(f"Loaded {len(current_triples)} triples")
+# === CHECKPOINT MANAGEMENT ===
+def find_latest_checkpoint():
+    """Find the latest checkpoint iteration number."""
+    if not os.path.exists(CHECKPOINT_DIR):
+        return None
+    
+    checkpoint_files = [f for f in os.listdir(CHECKPOINT_DIR) if f.startswith("iter_") and f.endswith("_triples.jsonl")]
+    if not checkpoint_files:
+        return None
+    
+    iterations = []
+    for f in checkpoint_files:
+        try:
+            iter_num = int(f.split("_")[1])
+            iterations.append(iter_num)
+        except (ValueError, IndexError):
+            continue
+    
+    return max(iterations) if iterations else None
+
+def load_checkpoint(iter_num):
+    """Load triples from a specific checkpoint iteration."""
+    checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num}_triples.jsonl")
+    if not os.path.exists(checkpoint_file):
+        return None
+    
+    with open(checkpoint_file) as f:
+        triples = [json.loads(line) for line in f]
+    log.info(f"Loaded checkpoint from iteration {iter_num}: {len(triples)} triples")
+    return triples
+
+def save_checkpoint(iter_num, triples):
+    """Save triples to checkpoint file."""
+    checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num}_triples.jsonl")
+    with open(checkpoint_file, 'w') as f:
+        for triple in triples:
+            f.write(json.dumps(triple) + '\n')
+    log.info(f"Saved checkpoint: {checkpoint_file} ({len(triples)} triples)")
+
+# === LOAD DATA (from checkpoint or seed) ===
+latest_iter = find_latest_checkpoint()
+if latest_iter is not None:
+    log.info(f"Found latest checkpoint at iteration {latest_iter}")
+    current_triples = load_checkpoint(latest_iter)
+    start_iter = latest_iter + 1
+    log.info(f"Resuming from iteration {start_iter}")
+else:
+    log.info("No checkpoint found, starting from seed data")
+    with open(SEED_FILE) as f:
+        current_triples = [json.loads(line) for line in f]
+    start_iter = 0
+    log.info(f"Loaded {len(current_triples)} triples from seed file")
+
+log.info(f"Starting EM loop from iteration {start_iter}, total iterations: {EM_ITERS}")
 
 # === REWARD: log pθ(x|z,c) + log pθ(z|c) ===
 def compute_reward(pθ, c, x, z):
@@ -154,7 +211,7 @@ def m_step(model, triples, mode, em_iter):
             per_device_train_batch_size=2,
             num_train_epochs=1,
             bf16=True,
-            report_to="wandb" if wandb else "none",
+            report_to="none",  # Disable auto-logging, we log manually with explicit steps
             logging_steps=10,
             log_level="info",
             run_name=f"m_step_{mode}_iter{em_iter+1}"
@@ -164,14 +221,16 @@ def m_step(model, triples, mode, em_iter):
     )
     train_result = trainer.train()
     
-    # Log final training loss to wandb with custom metric name
+    # Log final training loss to wandb with explicit step
     final_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else train_result.metrics.get('train_loss', 0)
-    if wandb:
-        wandb.log({
+    if wandb and wandb.run:
+        metrics = {
             f"m_step/{mode}_loss": final_loss,
             f"m_step/{mode}_num_samples": len(triples),
-            f"em_iteration": em_iter + 1
-        })
+            "em_iteration": em_iter + 1
+        }
+        wandb.log(metrics, step=em_iter + 1)
+        log.info(f"[WANDB] Logged M-step {mode} metrics: loss={final_loss:.4f}, samples={len(triples)}")
     
     log.info(f"M-step for {mode} complete. Final loss: {final_loss:.4f}")
 
@@ -200,24 +259,65 @@ def upload_checkpoint(pθ, qφ, iter_num):
     log.info(f"q iter-{iter_num} → {q_repo}/iter-{iter_num}")
 
 # === MAIN LOOP ===
-for em_iter in range(EM_ITERS):
-    log.info(f"\nEM ITER {em_iter+1}/{EM_ITERS}")
-    
-    # === E-STEP ===
-    log.info(f"[E-STEP] Starting E-step with {len(current_triples)} triples")
-    new_triples = []
-    batch_c, batch_x = [], []
-    total_batches = (len(current_triples) + BATCH_SIZE - 1) // BATCH_SIZE
-    batch_num = 0
-    all_rewards = []
-    
-    for t in current_triples:
-        batch_c.append(t["concepts"])
-        batch_x.append(t["problem"])
-        if len(batch_c) == BATCH_SIZE:
+if start_iter >= EM_ITERS:
+    log.warning(f"Latest checkpoint is at iteration {latest_iter}, but EM_ITERS={EM_ITERS}. Nothing to do.")
+else:
+    for em_iter in range(start_iter, EM_ITERS):
+        log.info(f"\nEM ITER {em_iter+1}/{EM_ITERS} (resumed from {start_iter})")
+        
+        # === E-STEP ===
+        log.info(f"[E-STEP] Starting E-step with {len(current_triples)} triples")
+        new_triples = []
+        batch_c, batch_x = [], []
+        total_batches = (len(current_triples) + BATCH_SIZE - 1) // BATCH_SIZE
+        batch_num = 0
+        all_rewards = []
+        
+        for t in current_triples:
+            batch_c.append(t["concepts"])
+            batch_x.append(t["problem"])
+            if len(batch_c) == BATCH_SIZE:
+                batch_num += 1
+                log.info(f"[E-STEP] Processing batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
+                
+                log.info(f"[E-STEP] Generating {K_SAMPLES} rationale candidates per sample...")
+                z_cands = batched_e_step(qφ, batch_c, batch_x)
+                log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
+                
+                log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
+                batch_rewards = []
+                for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
+                    rewards = [compute_reward(pθ, c, x, z) for z in z_list]
+                    batch_rewards.extend(rewards)
+                    all_rewards.append(max(rewards))
+                    best_z = z_list[rewards.index(max(rewards))]
+                    new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
+                    
+                    if (i + 1) % 4 == 0:
+                        log.info(f"[E-STEP]   Processed {i+1}/{len(batch_c)} samples in batch")
+                
+                avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
+                log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
+                
+                # Log batch metrics to wandb with explicit step
+                # All metrics use em_iteration as x-axis, so we log with em_iter + 1
+                if wandb and wandb.run:
+                    metrics = {
+                        "e_step/batch_reward_avg": avg_reward,
+                        "e_step/batch_reward_max": max(batch_rewards) if batch_rewards else 0,
+                        "e_step/batch_num": batch_num,
+                        "em_iteration": em_iter + 1
+                    }
+                    wandb.log(metrics, step=em_iter + 1)
+                    if batch_num == 1:  # Log first batch to confirm it works
+                        log.info(f"[WANDB] Logged batch metrics (first batch): {metrics}")
+                
+                batch_c, batch_x = [], []
+
+        # Process remaining batch if any
+        if batch_c:
             batch_num += 1
-            log.info(f"[E-STEP] Processing batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
-            
+            log.info(f"[E-STEP] Processing final batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
             log.info(f"[E-STEP] Generating {K_SAMPLES} rationale candidates per sample...")
             z_cands = batched_e_step(qφ, batch_c, batch_x)
             log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
@@ -230,84 +330,59 @@ for em_iter in range(EM_ITERS):
                 all_rewards.append(max(rewards))
                 best_z = z_list[rewards.index(max(rewards))]
                 new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
-                
-                if (i + 1) % 4 == 0:
-                    log.info(f"[E-STEP]   Processed {i+1}/{len(batch_c)} samples in batch")
-            
             avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-            log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
+            log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
             
-            # Log batch metrics to wandb
-            if wandb:
-                wandb.log({
-                    f"e_step/batch_reward_avg": avg_reward,
-                    f"e_step/batch_reward_max": max(batch_rewards) if batch_rewards else 0,
-                    f"e_step/batch_num": batch_num,
-                    f"em_iteration": em_iter + 1
-                })
+            # Log final batch metrics to wandb with explicit step
+            if wandb and wandb.run:
+                metrics = {
+                    "e_step/batch_reward_avg": avg_reward,
+                    "e_step/batch_reward_max": max(batch_rewards) if batch_rewards else 0,
+                    "e_step/batch_num": batch_num,
+                    "em_iteration": em_iter + 1
+                }
+                wandb.log(metrics, step=em_iter + 1)
+        
+        # E-step summary
+        if all_rewards:
+            avg_reward = sum(all_rewards) / len(all_rewards)
+            max_reward = max(all_rewards)
+            min_reward = min(all_rewards)
+            log.info(f"[E-STEP] Complete! Selected {len(new_triples)} triples")
+            log.info(f"[E-STEP] Reward stats - Avg: {avg_reward:.2f}, Max: {max_reward:.2f}, Min: {min_reward:.2f}")
             
-            batch_c, batch_x = [], []
+            # Log to wandb with explicit step
+            if wandb and wandb.run:
+                metrics = {
+                    "e_step/reward_avg": avg_reward,
+                    "e_step/reward_max": max_reward,
+                    "e_step/reward_min": min_reward,
+                    "e_step/triples_selected": len(new_triples),
+                    "em_iteration": em_iter + 1
+                }
+                wandb.log(metrics, step=em_iter + 1)
+                log.info(f"[WANDB] Logged E-step summary metrics: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
+        
+        # M-step with wandb logging
+        m_step(pθ, new_triples, "prompt", em_iter)
+        m_step(qφ, new_triples, "rationale", em_iter)
+        
+        current_triples = new_triples
+        # Save checkpoint after each iteration
+        save_checkpoint(em_iter, current_triples)
+        upload_checkpoint(pθ, qφ, em_iter)
+        
+        # Log iteration complete with explicit step
+        if wandb and wandb.run:
+            metrics = {
+                "em_iteration/complete": 1,
+                "em_iteration/num_triples": len(current_triples),
+                "em_iteration": em_iter + 1
+            }
+            wandb.log(metrics, step=em_iter + 1)
+            if em_iter == start_iter:  # Log first iteration to confirm
+                log.info(f"[WANDB] Logged iteration complete: {metrics}")
 
-    # Process remaining batch if any
-    if batch_c:
-        batch_num += 1
-        log.info(f"[E-STEP] Processing final batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
-        log.info(f"[E-STEP] Generating {K_SAMPLES} rationale candidates per sample...")
-        z_cands = batched_e_step(qφ, batch_c, batch_x)
-        log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
-        
-        log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
-        batch_rewards = []
-        for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
-            rewards = [compute_reward(pθ, c, x, z) for z in z_list]
-            batch_rewards.extend(rewards)
-            all_rewards.append(max(rewards))
-            best_z = z_list[rewards.index(max(rewards))]
-            new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
-        avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-        log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
-        
-        # Log final batch metrics to wandb
-        if wandb:
-            wandb.log({
-                f"e_step/batch_reward_avg": avg_reward,
-                f"e_step/batch_reward_max": max(batch_rewards) if batch_rewards else 0,
-                f"e_step/batch_num": batch_num,
-                f"em_iteration": em_iter + 1
-            })
-    
-    # E-step summary
-    if all_rewards:
-        avg_reward = sum(all_rewards) / len(all_rewards)
-        max_reward = max(all_rewards)
-        min_reward = min(all_rewards)
-        log.info(f"[E-STEP] Complete! Selected {len(new_triples)} triples")
-        log.info(f"[E-STEP] Reward stats - Avg: {avg_reward:.2f}, Max: {max_reward:.2f}, Min: {min_reward:.2f}")
-        
-        # Log to wandb
-        if wandb:
-            wandb.log({
-                f"e_step/reward_avg": avg_reward,
-                f"e_step/reward_max": max_reward,
-                f"e_step/reward_min": min_reward,
-                f"e_step/triples_selected": len(new_triples),
-                f"em_iteration": em_iter + 1
-            })
-    
-    # M-step with wandb logging
-    m_step(pθ, new_triples, "prompt", em_iter)
-    m_step(qφ, new_triples, "rationale", em_iter)
-    
-    current_triples = new_triples
-    upload_checkpoint(pθ, qφ, em_iter)
-    
-    # Log iteration complete
-    if wandb:
-        wandb.log({
-            f"em_iteration/complete": 1,
-            f"em_iteration/num_triples": len(current_triples)
-        })
-
-log.info("DONE!")
+    log.info("DONE!")
 if wandb:
     wandb.finish()
