@@ -19,9 +19,18 @@ OUTPUT_DIR_P = "./models/prompt_model"
 OUTPUT_DIR_Q = "./models/rationale_model"
 HF_USERNAME = "PanzerBread/promptCoT-"
 
-# Load tokenizer
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+# Load tokenizer (same config as em.py)
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_NAME,
+    trust_remote_code=True,
+    padding_side='left',
+    truncation_side='left'
+)
 tokenizer.pad_token = tokenizer.eos_token
+
+# Set max length (consistent with em.py, but we'll use 2048 for cold start)
+MAX_LENGTH_COLD_START = 2048
+tokenizer.model_max_length = min(getattr(tokenizer, 'model_max_length', 8192), MAX_LENGTH_COLD_START)
 
 # Load seed
 with open(SEED_FILE) as f:
@@ -34,60 +43,25 @@ def format_prompt(ex):
 def format_rationale(ex):
     return f"Concepts: {' | '.join(ex['concepts'])}\nProblem: {ex['problem']}\nRationale: {ex['rationale']}"
 
-# Tokenize with proper label masking
-def tokenize_with_mask(examples, mask_keyword):
-    """
-    Tokenize text and create labels where only tokens after mask_keyword contribute to loss.
-    mask_keyword should be "Problem:" for prompt_model and "Rationale:" for rationale_model.
-    For causal LM: labels[i] = input_ids[i+1], with -100 to ignore prefix tokens.
-    """
+# Simple tokenization (no masking needed for warm-start MLE)
+def tokenize(examples):
+    """Simple tokenization for warm-start - full sequence language modeling"""
     texts = examples["text"]
-    max_length = min(tokenizer.model_max_length, 2048)
-    encoded = tokenizer(texts, truncation=True, max_length=max_length, padding=False)
-    
-    # Tokenize the keyword to find it in the sequence
-    keyword_tokens = tokenizer.encode(mask_keyword, add_special_tokens=False)
-    
-    labels = []
-    for i, text in enumerate(texts):
-        input_ids = encoded["input_ids"][i]
-        # Find keyword tokens in the actual sequence (more reliable than encoding prefix separately)
-        mask_start_idx = None
-        for j in range(len(input_ids) - len(keyword_tokens) + 1):
-            if input_ids[j:j+len(keyword_tokens)] == keyword_tokens:
-                mask_start_idx = j + len(keyword_tokens)  # Start predicting after keyword
-                break
-        
-        # If keyword not found, fallback: encode prefix to find position
-        if mask_start_idx is None:
-            prefix = text.split(mask_keyword)[0] + mask_keyword
-            prefix_encoded = tokenizer(prefix, add_special_tokens=True, truncation=False)
-            mask_start_idx = len(prefix_encoded["input_ids"])
-        
-        # Create labels: -100 for prefix (including keyword itself), input_ids[i+1] for target tokens
-        label = [-100] * len(input_ids)
-        # For causal LM: at position j, we predict input_ids[j+1]
-        # We only want to compute loss on tokens after mask_keyword
-        for j in range(mask_start_idx - 1, len(input_ids) - 1):
-            label[j] = input_ids[j + 1]
-        labels.append(label)
-    
-    encoded["labels"] = labels
+    encoded = tokenizer(
+        texts,
+        truncation=True,
+        max_length=MAX_LENGTH_COLD_START,
+        padding=False
+    )
+    # DataCollatorForLanguageModeling will automatically create labels from input_ids
     return encoded
-
-# Tokenize
-def tokenize_prompt(examples):
-    return tokenize_with_mask(examples, "Problem:")
-
-def tokenize_rationale(examples):
-    return tokenize_with_mask(examples, "Rationale:")
 
 # Prepare datasets
 prompt_texts = [format_prompt(ex) for ex in seed_data]
 rationale_texts = [format_rationale(ex) for ex in seed_data]
 
-prompt_ds = Dataset.from_dict({"text": prompt_texts}).map(tokenize_prompt, batched=True)
-rationale_ds = Dataset.from_dict({"text": rationale_texts}).map(tokenize_rationale, batched=True)
+prompt_ds = Dataset.from_dict({"text": prompt_texts}).map(tokenize, batched=True)
+rationale_ds = Dataset.from_dict({"text": rationale_texts}).map(tokenize, batched=True)
 
 # LoRA
 lora_config = LoraConfig(
