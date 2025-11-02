@@ -1,148 +1,146 @@
-# em_loop.py
-import torch
+# em.py — FINAL, RUNNING ON H200
 import json
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
-from peft import PeftModel
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 from datasets import Dataset
-import random
+from peft import PeftModel
+import os
+import logging
+from huggingface_hub import HfApi, create_repo
+from dotenv import load_dotenv
 
-# Load tokenizer and models
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct", trust_remote_code=True)
+load_dotenv()
+HF_TOKEN = os.getenv("HF_TOKEN")
+HF_USERNAME = "PanzerBread/promptcot-"
+
+os.environ["WANDB_DISABLED"] = "true"
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+# === CONFIG ===
+MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
+SEED_FILE = "./data/annotated.jsonl"
+EM_ITERS = 10
+K_SAMPLES = 3
+BATCH_SIZE = 8
+
+# === TOKENIZER ===
+log.info("Loading tokenizer...")
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_NAME,
+    trust_remote_code=True,
+    padding_side='left',
+    truncation_side='left'
+)
 tokenizer.pad_token = tokenizer.eos_token
 
-base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct", trust_remote_code=True)
-prompt_model = PeftModel.from_pretrained(base, "PanzerBread/promptCoT-prompt")
-rationale_model = PeftModel.from_pretrained(base, "PanzerBread/promptCoT-rationale")
+# === MODELS ===
+log.info("Loading base...")
+base = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True
+)
 
-prompt_model.eval()
-rationale_model.eval()
+log.info("Loading pθ...")
+pθ = PeftModel.from_pretrained(base, "./models/prompt_model", is_trainable=True)
+log.info("Loading qφ...")
+qφ = PeftModel.from_pretrained(base, "./models/rationale_model", is_trainable=True)
 
-# Load seed triples
-with open("./data/seed_triples.json") as f:
-    current_triples = json.load(f)  # List of (c, z, x)
+# === SEED ===
+with open(SEED_FILE) as f:
+    current_triples = [json.loads(line) for line in f]
+log.info(f"Loaded {len(current_triples)} triples")
 
-# Helper function to compute log probability of a sequence given a context
-def compute_log_prob(model, context, target):
-    """
-    Computes log P(target | context) using the model.
-    
-    Args:
-        model: Causal language model
-        context: String context (e.g., "Concepts: c\nRationale:")
-        target: String target to compute probability of (e.g., "z")
-    
-    Returns:
-        Average log probability per token (float)
-    """
-    # Create full text: context + target
-    full_text = context + target
-    
-    # Tokenize
-    inputs = tokenizer(full_text, return_tensors="pt", truncation=True, max_length=512)
-    
-    # Get labels: shift by 1 to predict next token
-    # We only want to compute loss on the target part, not the context
-    labels = inputs["input_ids"].clone()
-    context_length = tokenizer(context, return_tensors="pt", truncation=True, max_length=512)["input_ids"].shape[1]
-    
-    # Mask context tokens so we only compute loss on target tokens
-    labels[:, :context_length] = -100
-    
-    # Forward pass
+# === REWARD ===
+def compute_reward(pθ, c, x, z):
+    try:
+        input_x = tokenizer(f"Concepts: {' | '.join(c)}\nRationale: {z}\nProblem: {x}", return_tensors="pt").to(pθ.device)
+        loss = pθ(**input_x, labels=input_x["input_ids"]).loss
+        return -loss.item()
+    except:
+        return -100
+
+# === BATCHED E-STEP (FIXED) ===
+def batched_e_step(qφ, batch_c, batch_x):
+    input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
+    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(qφ.device)
+
     with torch.no_grad():
-        outputs = model(**inputs, labels=labels)
-    
-    # Return negative loss (which is log probability)
-    # outputs.loss is the average negative log probability per token
-    # We negate it to get positive log probability
-    return -outputs.loss.item()
+        outputs = qφ.generate(
+            **inputs,
+            max_new_tokens=64,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            num_return_sequences=K_SAMPLES,
+            pad_token_id=tokenizer.eos_token_id,
+            return_dict_in_generate=True,
+            output_scores=True
+        )
 
-# Reward function (Eq. 5)
-def reward(prompt_model, rationale_model, c, x, z):
-    # log p_θ(z|c) - probability of rationale given concepts
-    context_z = f"Concepts: {'|'.join(c)}\nRationale: "
-    log_p_z = compute_log_prob(prompt_model, context_z, z)
+    sequences = outputs.sequences.reshape(len(batch_c), K_SAMPLES, -1)
+    z_candidates = []
+    for i in range(len(batch_c)):
+        z_list = []
+        for k in range(K_SAMPLES):
+            seq = sequences[i, k]
+            z = tokenizer.decode(seq, skip_special_tokens=True).split("Rationale:")[-1].strip()
+            z_list.append(z)
+        z_candidates.append(z_list)
+    return z_candidates
 
-    # log p_θ(x|z,c) - probability of problem given concepts and rationale
-    context_x = f"Concepts: {'|'.join(c)}\nRationale: {z}\nProblem: "
-    log_p_x = compute_log_prob(prompt_model, context_x, x)
-
-    return log_p_z + log_p_x
-
-# E-Step: Sample 8 rationales, pick best
-def e_step(rationale_model, c, x, k=8):
-    candidates = []
-    for _ in range(k):
-        input_text = f"Concepts: {'|'.join(c)}\nProblem: {x}\nRationale:"
-        z = rationale_model.generate(input_text, max_new_tokens=64)
-        candidates.append(z)
-    
-    rewards = [reward(prompt_model, rationale_model, c, x, z) for z in candidates]
-    z_best = candidates[torch.argmax(torch.tensor(rewards))]
-    return z_best
-
-# Tokenize function for dataset
-def tokenize(examples):
-    return tokenizer(examples["text"], truncation=True, max_length=512, padding=False)
-
-# M-Step: SFT one epoch
+# === M-STEP ===
 def m_step(model, triples, mode):
-    # mode: "prompt" or "rationale"
-    formatted = []
+    texts = []
     for t in triples:
-        if mode == "prompt":
-            text = f"Concepts: {'|'.join(t['c'])}\nRationale: {t['z']}\nProblem: {t['x']}"
-        else:
-            text = f"Concepts: {'|'.join(t['c'])}\nProblem: {t['x']}\nRationale: {t['z']}"
-        formatted.append({"text": text})
+        text = f"Concepts: {' | '.join(t['concepts'])}\nRationale: {t['rationale']}\nProblem: {t['problem']}" if mode == "prompt" else \
+               f"Concepts: {' | '.join(t['concepts'])}\nProblem: {t['problem']}\nRationale: {t['rationale']}"
+        texts.append({"text": text})
     
-    dataset = Dataset.from_list(formatted)
-    dataset = dataset.map(tokenize, batched=True)
-    
-    # Data collator
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=False
-    )
-    
-    # Training args
-    training_args = TrainingArguments(
-        output_dir="temp",
-        num_train_epochs=1,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,
-        warmup_steps=10,
-        logging_steps=5,
-        report_to="none",
-        bf16=True,
-    )
-    
-    trainer = Trainer(model=model, args=training_args, train_dataset=dataset, data_collator=data_collator)
+    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=512), batched=True)
+    trainer = Trainer(model=model, args=TrainingArguments(output_dir="temp", per_device_train_batch_size=2, num_train_epochs=1, bf16=True, report_to="none"), train_dataset=ds)
     trainer.train()
-    
-    # Set model back to eval mode
-    model.eval()
 
-# === MAIN EM LOOP ===
-for em_iter in range(10):
-    print(f"EM Iteration {em_iter+1}/10")
+# === HF UPLOAD (2 REPOS) ===
+def upload_checkpoint(pθ, qφ, iter_num):
+    if not HF_TOKEN: return
+    api = HfApi(token=HF_TOKEN)
     
+    # pθ
+    pθ.save_pretrained(f"./temp_pθ_iter{iter_num}")
+    p_repo = f"{HF_USERNAME}pθ"
+    create_repo(p_repo, token=HF_TOKEN, repo_type="model", exist_ok=True)
+    api.upload_folder(folder_path=f"./temp_pθ_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=p_repo, repo_type="model")
+    api.upload_folder(folder_path=f"./temp_pθ_iter{iter_num}", path_in_repo="latest", repo_id=p_repo, repo_type="model")
+    
+    # qφ
+    qφ.save_pretrained(f"./temp_qφ_iter{iter_num}")
+    q_repo = f"{HF_USERNAME}qφ"
+    create_repo(q_repo, token=HF_TOKEN, repo_type="model", exist_ok=True)
+    api.upload_folder(folder_path=f"./temp_qφ_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=q_repo, repo_type="model")
+    api.upload_folder(folder_path=f"./temp_qφ_iter{iter_num}", path_in_repo="latest", repo_id=q_repo, repo_type="model")
+
+# === MAIN LOOP ===
+for em_iter in range(EM_ITERS):
+    log.info(f"\nEM ITER {em_iter+1}/{EM_ITERS}")
     new_triples = []
-    for triple in current_triples:
-        c, x = triple["c"], triple["x"]
-        z_best = e_step(rationale_model, c, x)
-        new_triples.append({"c": c, "z": z_best, "x": x})
+    batch_c, batch_x = [], []
     
-    # M-Step: Update prompt_model
-    m_step(prompt_model, new_triples, mode="prompt")
+    for t in current_triples:
+        batch_c.append(t["concepts"])
+        batch_x.append(t["problem"])
+        if len(batch_c) == BATCH_SIZE:
+            z_cands = batched_e_step(qφ, batch_c, batch_x)
+            for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
+                best_z = max(z_list, key=lambda z: compute_reward(pθ, c, x, z))
+                new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
+            batch_c, batch_x = [], []
     
-    # Update rationale_model
-    m_step(rationale_model, new_triples, mode="rationale")
-    
+    m_step(pθ, new_triples, "prompt")
+    m_step(qφ, new_triples, "rationale")
     current_triples = new_triples
-    
-    # Save checkpoint
-    prompt_model.save_pretrained(f"./checkpoints/prompt_model_iter_{em_iter}")
-    rationale_model.save_pretrained(f"./checkpoints/rationale_model_iter_{em_iter}")
+    upload_checkpoint(pθ, qφ, em_iter)
 
-print("EM loop complete! Generated 100k+ hard problems.")
+log.info("DONE!")
