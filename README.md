@@ -130,16 +130,3 @@ This will:
 **Requirements**: See `requirements.txt`
 
 **Environment**: Set `HF_TOKEN` in `.env` file for automatic model uploads.
-
-## Paper Citation
-
-If you use this implementation, please cite the PromptCoT paper:
-
-```
-@article{promptcot2025,
-  title={PromptCoT: Concept-Guided Synthetic Data for Mathematical Reasoning},
-  author={[Authors]},
-  journal={arXiv preprint arXiv:2509.19894},
-  year={2025}
-}
-```
