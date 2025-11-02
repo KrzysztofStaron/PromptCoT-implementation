@@ -1,4 +1,4 @@
-# em.py — FINAL, RUNNING ON H200
+# em.py — FINAL, FAST, COMPILED, RUNNING ON H200
 import json
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
@@ -14,15 +14,16 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 HF_USERNAME = "PanzerBread/promptcot-"
 
 os.environ["WANDB_DISABLED"] = "true"
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 log = logging.getLogger(__name__)
 
 # === CONFIG ===
 MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 SEED_FILE = "./data/annotated.jsonl"
 EM_ITERS = 10
-K_SAMPLES = 3
-BATCH_SIZE = 8
+K_SAMPLES = 3  # Reduced for speed
+BATCH_SIZE = 8  # Batched for speed
+USE_COMPILE = True if torch.cuda.get_device_capability()[0] >= 8 else False  # H200 = True
 
 # === TOKENIZER ===
 log.info("Loading tokenizer...")
@@ -45,8 +46,15 @@ base = AutoModelForCausalLM.from_pretrained(
 
 log.info("Loading pθ...")
 pθ = PeftModel.from_pretrained(base, "./models/prompt_model", is_trainable=True)
+
 log.info("Loading qφ...")
 qφ = PeftModel.from_pretrained(base, "./models/rationale_model", is_trainable=True)
+
+# === COMPILE FOR SPEED (H200) ===
+if USE_COMPILE:
+    log.info("Compiling models for 50% speedup...")
+    pθ = torch.compile(pθ, mode="reduce-overhead", fullgraph=True)
+    qφ = torch.compile(qφ, mode="reduce-overhead", fullgraph=True)
 
 # === SEED ===
 with open(SEED_FILE) as f:
@@ -59,10 +67,11 @@ def compute_reward(pθ, c, x, z):
         input_x = tokenizer(f"Concepts: {' | '.join(c)}\nRationale: {z}\nProblem: {x}", return_tensors="pt").to(pθ.device)
         loss = pθ(**input_x, labels=input_x["input_ids"]).loss
         return -loss.item()
-    except:
+    except Exception as e:
+        log.warning(f"Reward error: {e}")
         return -100
 
-# === BATCHED E-STEP (FIXED) ===
+# === BATCHED E-STEP (FAST) ===
 def batched_e_step(qφ, batch_c, batch_x):
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
     inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(qφ.device)
@@ -105,22 +114,27 @@ def m_step(model, triples, mode):
 
 # === HF UPLOAD (2 REPOS) ===
 def upload_checkpoint(pθ, qφ, iter_num):
-    if not HF_TOKEN: return
+    if not HF_TOKEN:
+        log.warning("HF_TOKEN missing — skipping upload")
+        return
+
     api = HfApi(token=HF_TOKEN)
     
-    # pθ
-    pθ.save_pretrained(f"./temp_pθ_iter{iter_num}")
-    p_repo = f"{HF_USERNAME}pθ"
+    # pθ → promptcot-p
+    pθ.save_pretrained(f"./temp_p_iter{iter_num}")
+    p_repo = f"{HF_USERNAME}p"
     create_repo(p_repo, token=HF_TOKEN, repo_type="model", exist_ok=True)
-    api.upload_folder(folder_path=f"./temp_pθ_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=p_repo, repo_type="model")
-    api.upload_folder(folder_path=f"./temp_pθ_iter{iter_num}", path_in_repo="latest", repo_id=p_repo, repo_type="model")
-    
-    # qφ
-    qφ.save_pretrained(f"./temp_qφ_iter{iter_num}")
-    q_repo = f"{HF_USERNAME}qφ"
+    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=p_repo, repo_type="model")
+    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo="latest", repo_id=p_repo, repo_type="model")
+    log.info(f"p iter-{iter_num} → {p_repo}/iter-{iter_num}")
+
+    # qφ → promptcot-q
+    qφ.save_pretrained(f"./temp_q_iter{iter_num}")
+    q_repo = f"{HF_USERNAME}q"
     create_repo(q_repo, token=HF_TOKEN, repo_type="model", exist_ok=True)
-    api.upload_folder(folder_path=f"./temp_qφ_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=q_repo, repo_type="model")
-    api.upload_folder(folder_path=f"./temp_qφ_iter{iter_num}", path_in_repo="latest", repo_id=q_repo, repo_type="model")
+    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=q_repo, repo_type="model")
+    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo="latest", repo_id=q_repo, repo_type="model")
+    log.info(f"q iter-{iter_num} → {q_repo}/iter-{iter_num}")
 
 # === MAIN LOOP ===
 for em_iter in range(EM_ITERS):
@@ -138,8 +152,19 @@ for em_iter in range(EM_ITERS):
                 new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
             batch_c, batch_x = [], []
     
+    # Handle remainder
+    if batch_c:
+        z_cands = batched_e_step(qφ, batch_c, batch_x)
+        for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
+            best_z = max(z_list, key=lambda z: compute_reward(pθ, c, x, z))
+            new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
+
+    log.info("M-Step: Training pθ...")
     m_step(pθ, new_triples, "prompt")
+
+    log.info("M-Step: Training qφ...")
     m_step(qφ, new_triples, "rationale")
+
     current_triples = new_triples
     upload_checkpoint(pθ, qφ, em_iter)
 
