@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Models and checkpoints
+models/
+*.pt
+*.pth
+*.bin
+*.safetensors
+checkpoint-*/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+wandb/
+tb_logs/
+
+# Data (keep data/ in git but ignore large files)
+*.h5
+*.hdf5
+*.pickle
+*.pkl
+!data/*.jsonl

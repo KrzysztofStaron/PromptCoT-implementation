@@ -17,12 +17,8 @@
 # """"
 
 
-import json
-from transformers import AutoModelForCausalLM
-
-# qφ(z|c,x)
-rationale_model = AutoModelForCausalLM.from_pretrained("gpt2")
-
-# pθ(x|z,c)
-prompt_model = AutoModelForCausalLM.from_pretrained("gpt2")
+# This is the main coordinator file for the PromptCoT project
+# Individual training scripts have been split into separate files:
+# - finetune_rationale.py: Fine-tunes the rationale model qφ(z|c,x)
+# - finetune_prompt.py: Fine-tunes the prompt model pθ(x|z,c)
 
