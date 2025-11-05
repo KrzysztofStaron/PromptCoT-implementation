@@ -1,0 +1,317 @@
+---
+base_model: Qwen/Qwen2.5-7B-Instruct
+library_name: peft
+pipeline_tag: text-generation
+tags:
+  - base_model:adapter:Qwen/Qwen2.5-7B-Instruct
+  - lora
+  - transformers
+  - promptcot
+  - chain-of-thought
+  - mathematical-reasoning
+---
+
+# PromptCoT 2.0 - Prompt Model (pθ)
+
+This is the **Prompt Model (pθ)** from the PromptCoT 2.0 implementation, trained using Expectation-Maximization (EM) algorithm to generate challenging mathematical problems given concepts and rationales.
+
+## Model Details
+
+### Model Description
+
+This model is part of a dual-model system implementing PromptCoT 2.0:
+
+- **pθ (Prompt Model)**: Generates problems `x` given concepts `c` and rationale `z` → `p(x|z,c)`
+- **qφ (Rationale Model)**: Generates rationales `z` given concepts `c` and problem `x` → `q(z|c,x)`
+
+The models are trained iteratively using an EM loop:
+
+1. **E-step**: Generate K=8 rationale candidates, compute rewards, select best
+2. **M-step**: Fine-tune both models on selected (concept, rationale, problem) triples
+
+- **Developed by:** [Your Name/Organization]
+- **Model type:** LoRA fine-tuned Causal Language Model
+- **Language(s):** English (mathematical reasoning)
+- **License:** Apache 2.0 (inherited from Qwen2.5-7B-Instruct)
+- **Finetuned from:** Qwen/Qwen2.5-7B-Instruct
+
+### Model Sources
+
+- **Base Model:** [Qwen/Qwen2.5-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct)
+- **Paper:** [PromptCoT 2.0: Scaling Prompt Synthesis for Large Language Model Reasoning](https://arxiv.org/abs/2509.19894) (arXiv:2509.19894)
+- **Authors:** Xueliang Zhao, Wei Wu, Jian Guan, Zhuocheng Gong, Lingpeng Kong
+- **Related Model:** [PromptCoT Rationale Model (qφ)](https://huggingface.co/PanzerBread/promptcot-q)
+
+## Uses
+
+### Direct Use
+
+This model is designed to generate challenging mathematical problems given:
+
+- **Input format**: `Concepts: c1 | c2 | ...\nRationale: [rationale text]\nProblem:`
+- **Output**: Mathematical problem text
+
+**Example:**
+
+```python
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+base_model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+model = PeftModel.from_pretrained(base_model, "PanzerBread/promptcot-p")
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+
+concepts = "algebra | quadratic equations"
+rationale = "We need to find the roots of a quadratic equation..."
+prompt = f"Concepts: {concepts}\nRationale: {rationale}\nProblem:"
+
+inputs = tokenizer(prompt, return_tensors="pt")
+outputs = model.generate(**inputs, max_new_tokens=256)
+problem = tokenizer.decode(outputs[0], skip_special_tokens=True)
+```
+
+### Downstream Use
+
+This model is part of the PromptCoT 2.0 EM training loop. Use it together with the rationale model (qφ) to:
+
+- Generate synthetic training data for mathematical reasoning
+- Improve problem-solving capabilities through iterative refinement
+- Create challenging problem sets for educational purposes
+
+### Out-of-Scope Use
+
+This model is specialized for mathematical reasoning and may not perform well for:
+
+- General conversational tasks
+- Non-mathematical problem generation
+- Tasks requiring external knowledge beyond mathematical concepts
+
+## Bias, Risks, and Limitations
+
+### Known Limitations
+
+- **Domain Specificity**: This model is trained specifically for mathematical reasoning and may not generalize well to other domains
+- **Training Data Bias**: The model inherits biases from the seed dataset (AIME, GSM8K, Math500), which may reflect specific mathematical problem styles
+- **EM Convergence**: The EM algorithm may converge to local optima, depending on initialization and hyperparameters
+- **Generated Quality**: Generated problems may require manual validation for correctness and appropriateness
+
+### Technical Limitations
+
+- **Context Length**: Limited to 512 tokens during EM training (2048 for cold start)
+- **Sampling**: Uses temperature sampling (T=0.7) which may produce diverse but sometimes inconsistent outputs
+- **Reward Function**: The reward is based on log probabilities, which may not perfectly correlate with problem quality
+
+### Recommendations
+
+Users should:
+
+1. **Validate Outputs**: Always verify generated problems for mathematical correctness
+2. **Use with Rationale Model**: This model works best when paired with the rationale model (qφ) in the full EM loop
+3. **Monitor Training**: Check WandB logs for reward trends and training stability
+4. **Iterative Refinement**: The EM process requires multiple iterations for best results
+
+## How to Get Started with the Model
+
+### Installation
+
+```bash
+pip install transformers peft torch
+```
+
+### Loading the Model
+
+```python
+import torch
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Load base model
+base_model = AutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2.5-7B-Instruct",
+    torch_dtype=torch.bfloat16,
+    device_map="auto"
+)
+
+# Load LoRA adapters
+model = PeftModel.from_pretrained(base_model, "PanzerBread/promptcot-p")
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+tokenizer.pad_token = tokenizer.eos_token
+```
+
+### Generating Problems
+
+```python
+concepts = "algebra | quadratic equations | factoring"
+rationale = "To solve this problem, we need to factor the quadratic equation and find its roots..."
+
+prompt = f"Concepts: {concepts}\nRationale: {rationale}\nProblem:"
+
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+outputs = model.generate(
+    **inputs,
+    max_new_tokens=256,
+    temperature=0.7,
+    do_sample=True
+)
+
+problem = tokenizer.decode(outputs[0], skip_special_tokens=True)
+print(problem.split("Problem:")[-1].strip())
+```
+
+## Training Details
+
+### Training Data
+
+**Seed Dataset:**
+
+- 253 concept-rationale-problem triples from:
+  - AIME 2024/2025
+  - GSM8K
+  - Math500
+- Format: `(concepts: List[str], rationale: str, problem: str)`
+
+**Training Process:**
+
+1. **Cold Start**: Warm-start both models via Maximum Likelihood Estimation (MLE) on seed dataset
+2. **EM Loop**: Iterative refinement through 10 EM iterations
+   - Each iteration generates K=8 rationale candidates per problem
+   - Selects best candidate based on reward function
+   - Fine-tunes both models on selected triples
+
+### Training Procedure
+
+#### Preprocessing
+
+- Tokenization: Left-padding, max_length=512 (EM loop) / 2048 (cold start)
+- Format: `Concepts: c1 | c2 | ...\nRationale: z\nProblem: x`
+- Masked cross-entropy loss (only tokens after "Problem:" keyword)
+
+#### Training Hyperparameters
+
+- **Training regime:** bfloat16 mixed precision
+- **LoRA Configuration:**
+  - `r=64` (rank)
+  - `lora_alpha=16`
+  - `lora_dropout=0.05`
+  - Target modules: `["q_proj", "k_proj", "v_proj", "o_proj"]`
+- **EM Loop:**
+  - Batch size: 16
+  - K samples: 8 rationale candidates per problem
+  - Learning rate: 2e-5 (inferred from Trainer defaults)
+  - Epochs per M-step: 1
+- **Reward Function:**
+  ```
+  R(c,x,z) = log p(x|z,c) + log p(z|c)
+  ```
+  Where log probabilities are computed as negative cross-entropy loss.
+
+#### Speeds, Sizes, Times
+
+- **Model Size:** ~7B parameters (base) + ~0.02B (LoRA adapters)
+- **Hardware:** H200 GPU (141 GB VRAM)
+- **Training Time:** ~X hours per EM iteration (depending on dataset size)
+
+## Evaluation
+
+### Testing Data, Factors & Metrics
+
+#### Testing Data
+
+- Seed dataset: 253 triples (training/validation split if applicable)
+- Generated data: Synthetic problems created during EM iterations
+
+#### Metrics
+
+- **Reward Score**: Average reward per iteration (R(c,x,z) = log p(x|z,c) + log p(z|c))
+- **Training Loss**: Cross-entropy loss on selected triples
+- **Rationale Quality**: Measured through reward-based selection
+
+### Results
+
+Training progress is monitored via WandB:
+
+- E-step reward statistics (avg, max, min)
+- M-step training losses for both models
+- Number of triples selected per iteration
+
+**Note:** This is an ongoing training process. Final evaluation results will be updated upon completion of all EM iterations.
+
+#### Summary
+
+The model is trained using PromptCoT 2.0's EM algorithm, which iteratively improves both problem generation (pθ) and rationale generation (qφ) capabilities through reward-based selection.
+
+## Model Examination [optional]
+
+<!-- Relevant interpretability work for the model goes here -->
+
+[More Information Needed]
+
+## Technical Specifications
+
+### Model Architecture and Objective
+
+- **Base Architecture:** Qwen2.5-7B-Instruct (Transformer decoder)
+- **Fine-tuning Method:** LoRA (Low-Rank Adaptation)
+- **Objective:** Causal language modeling with masked cross-entropy
+- **Task:** Generate problems `x` given concepts `c` and rationale `z`
+
+### Compute Infrastructure
+
+#### Hardware
+
+- **Training:** NVIDIA H200 GPU (141 GB VRAM)
+- **Inference:** Compatible with any GPU supporting bfloat16
+
+#### Software
+
+- **Framework:** PyTorch 2.0+
+- **Libraries:**
+  - transformers
+  - peft (v0.17.1+)
+  - datasets
+  - wandb (for logging)
+- **CUDA:** Compatible with CUDA 11.8+
+
+## Citation
+
+If you use this model, please cite the PromptCoT 2.0 paper:
+
+**BibTeX:**
+
+```bibtex
+@article{zhao2025promptcot2,
+  title={PromptCoT 2.0: Scaling Prompt Synthesis for Large Language Model Reasoning},
+  author={Zhao, Xueliang and Wu, Wei and Guan, Jian and Gong, Zhuocheng and Kong, Lingpeng},
+  journal={arXiv preprint arXiv:2509.19894},
+  year={2025}
+}
+```
+
+**APA:**
+Zhao, X., Wu, W., Guan, J., Gong, Z., & Kong, L. (2025). PromptCoT 2.0: Scaling Prompt Synthesis for Large Language Model Reasoning. _arXiv preprint arXiv:2509.19894_.
+
+**Paper Link:** [https://arxiv.org/abs/2509.19894](https://arxiv.org/abs/2509.19894)
+
+## Glossary [optional]
+
+<!-- If relevant, include terms and calculations in this section that can help readers understand the model or model card. -->
+
+[More Information Needed]
+
+## More Information [optional]
+
+[More Information Needed]
+
+## Model Card Authors
+
+[Your Name/Organization]
+
+## Model Card Contact
+
+[Your Email/Contact]
+
+### Framework versions
+
+- PEFT 0.17.1
+- transformers 4.40.0+
+- torch 2.0+
