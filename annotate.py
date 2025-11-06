@@ -23,13 +23,22 @@ CONCEPT_FILE = BASE_DIR / "mathematics_concepts.jsonl"
 OUTPUT_FILE = DATA_DIR / "annotated.jsonl"
 
 MODEL_CONFIGS: List[Dict[str, str]] = [
-    {"name": "gpt-4o", "provider": "openai", "label": "openai:gpt-4o"},
-    {"name": "openai/gpt-4.1-mini", "provider": "openrouter", "label": "openrouter:openai/gpt-4.1-mini"},
-    {"name": "anthropic/claude-3.5-sonnet", "provider": "openrouter", "label": "openrouter:anthropic/claude-3.5-sonnet"},
-    {"name": "google/gemini-1.5-pro", "provider": "openrouter", "label": "openrouter:google/gemini-1.5-pro"},
+    {"name": "openai/gpt-5", "provider": "openai", "label": "openai:gpt-5"},
+    {"name": "x-ai/grok-4", "provider": "openrouter", "label": "openrouter:x-ai/grok-4"},
+    {"name": "anthropic/claude-sonnet-4.5", "provider": "openrouter", "label": "openrouter:anthropic/claude-sonnet-4.5"},
+    {"name": "qwen/qwen3-235b-a22b-thinking-2507", "provider": "openrouter", "label": "openrouter:qwen/qwen3-235b-a22b-thinking-2507"},
 ]
 
 CHAT_TOKEN_PATTERN = re.compile(r"<[^>]+>")
+
+INVALID_RATIONALE_PHRASES = [
+    "the answer is",
+    "final answer",
+    "we get the answer",
+    "\boxed",
+    "answer:\"",
+    "####",
+]
 
 
 def load_concept_pool() -> List[str]:
@@ -135,19 +144,32 @@ def parse_model_content(content: object) -> Optional[Dict[str, object]]:
     return None
 
 
+def is_design_rationale(text: str) -> bool:
+    lowered = text.lower()
+    if any(phrase in lowered for phrase in INVALID_RATIONALE_PHRASES):
+        return False
+    return True
+
+
 def build_prompt(problem: str, solution: str, concept_examples: List[str]) -> str:
     bullets = "\n".join(f"- {concept}" for concept in concept_examples)
     return (
-        "Analyze the following math problem and its worked solution. "
-        "Return a JSON object with exactly five high-signal mathematical concepts "
-        "(ordered by importance) and a concise rationale that follows the solution's logic.\n\n"
-        f"Problem:\n{problem}\n\n"
-        f"Solution:\n{solution}\n\n"
-        "Concept examples (use as inspiration, but prefer precise matches):\n"
+        "You are reverse-engineering a contest problem. Study the final prompt and its worked solution, then "
+        "produce a meta-level synthesis plan that describes how to craft such a problem before it is written. "
+        "Do NOT solve the problem again or present numeric answers. Focus on the creative blueprint: selecting core tools, "
+        "layering obstacles, stress-testing edge cases, and guaranteeing the final prompt remains coherent and difficult.\n\n"
+        f"Problem (already authored):\n{problem}\n\n"
+        f"Author's solution (for reference only—do not replicate):\n{solution}\n\n"
+        "Concept inspirations (choose the best fitting, do not copy verbatim):\n"
         f"{bullets}\n\n"
-        "Respond in this JSON schema:\n"
+        "Return a JSON object with this schema:\n"
         "{\n  \"concepts\": [\"concept1\", \"concept2\", \"concept3\", \"concept4\", \"concept5\"],\n"
-        "  \"rationale\": \"step-by-step reasoning\"\n}"
+        "  \"rationale\": \"design blueprint describing how to assemble the problem (no final answers)\"\n}"
+        "\nGuidelines:\n"
+        "- Concepts: exactly five concise handles (e.g., 'Modular orders', 'Chinese Remainder scaffolding').\n"
+        "- Rationale: multi-step creative plan describing how to combine the concepts, inject constraints, and iterate until the prompt is challenging.\n"
+        "- Do NOT restate the original solution, compute values, or mention final answers.\n"
+        "- Use imperative or process-oriented language (e.g., 'Introduce...', 'Force...', 'Leverage counterexamples...').\n"
     )
 
 
@@ -204,7 +226,10 @@ def annotate_with_model(
         if len(concepts) < 5:
             return None
         concepts = concepts[:5]
-        return {"concepts": concepts, "rationale": rationale.strip()}
+        rationale_text = rationale.strip()
+        if not is_design_rationale(rationale_text):
+            return None
+        return {"concepts": concepts, "rationale": rationale_text}
     except Exception as error:
         print(f"Error from {model_cfg['label']}: {error}")
         return None
@@ -222,8 +247,8 @@ def load_existing_results() -> Tuple[List[Dict[str, object]], set]:
             record = json.loads(line)
             records.append(record)
             problem_key = record.get("source_id") or record.get("id") or record.get("problem")
-            model_key = record.get("model", "unknown")
-            completed.add((problem_key, model_key))
+            if problem_key:
+                completed.add(problem_key)
     return records, completed
 
 
@@ -260,42 +285,51 @@ def main() -> None:
     for cfg in active_models:
         print(f"  - {cfg['label']}")
 
-    results, completed_pairs = load_existing_results()
+    results, completed_ids = load_existing_results()
     print(f"🗂️  Existing annotations: {len(results)}")
 
+    random.shuffle(problem_bank)
+    processed_count = len(completed_ids)
+    model_index = processed_count % len(active_models)
     total_requests = 0
+
     for item in problem_bank:
-        for model_cfg in active_models:
-            pair_key = (item["source_id"], model_cfg["name"])
-            if pair_key in completed_pairs:
-                continue
-            annotation = annotate_with_model(
-                item["problem"],
-                item["solution"],
-                model_cfg,
-                concept_pool,
+        if item["source_id"] in completed_ids:
+            continue
+
+        model_cfg = active_models[model_index % len(active_models)]
+        annotation = annotate_with_model(
+            item["problem"],
+            item["solution"],
+            model_cfg,
+            concept_pool,
+        )
+        total_requests += 1
+
+        if annotation:
+            record = {
+                "source": item["source"],
+                "source_id": item["source_id"],
+                "problem": item["problem"],
+                "solution": item["solution"],
+                "concepts": annotation["concepts"],
+                "rationale": annotation["rationale"],
+                "model": model_cfg["name"],
+                "provider": model_cfg["provider"],
+            }
+            results.append(record)
+            completed_ids.add(item["source_id"])
+            processed_count += 1
+            model_index = processed_count % len(active_models)
+            persist_results(results)
+            print(
+                f"✓ {item['source_id']} via {model_cfg['label']} — total {len(results)} entries"
             )
-            total_requests += 1
-            if annotation:
-                record = {
-                    "source": item["source"],
-                    "source_id": item["source_id"],
-                    "problem": item["problem"],
-                    "solution": item["solution"],
-                    "concepts": annotation["concepts"],
-                    "rationale": annotation["rationale"],
-                    "model": model_cfg["name"],
-                    "provider": model_cfg["provider"],
-                }
-                results.append(record)
-                completed_pairs.add(pair_key)
-                persist_results(results)
-                print(
-                    f"✓ {item['source_id']} via {model_cfg['label']} — total {len(results)} entries"
-                )
-            else:
-                print(f"✗ {item['source_id']} via {model_cfg['label']} (no annotation)")
-            time.sleep(0.5)
+        else:
+            print(f"✗ {item['source_id']} via {model_cfg['label']} (no annotation)")
+            model_index = (model_index + 1) % len(active_models)
+
+        time.sleep(0.5)
 
     print(
         f"\n✅ Finished. Generated {len(results)} triplets after {total_requests} model calls."
