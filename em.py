@@ -9,6 +9,7 @@ import logging
 import wandb
 from huggingface_hub import HfApi, create_repo
 from dotenv import load_dotenv
+from tieBreaker import select_best_rationale
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -24,6 +25,7 @@ CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 10
 K_SAMPLES = 8
 BATCH_SIZE = 16
+USE_GROQ_TIEBREAKER = True
 
 # Create checkpoint directory if it doesn't exist
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -289,8 +291,14 @@ else:
                 for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
                     rewards = [compute_reward(pθ, c, x, z) for z in z_list]
                     batch_rewards.extend(rewards)
-                    all_rewards.append(max(rewards))
-                    best_z = z_list[rewards.index(max(rewards))]
+                    best_idx, best_z = select_best_rationale(
+                        c,
+                        x,
+                        z_list,
+                        rewards,
+                        use_groq=USE_GROQ_TIEBREAKER
+                    )
+                    all_rewards.append(rewards[best_idx])
                     new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
                     
                     if (i + 1) % 4 == 0:
@@ -327,8 +335,14 @@ else:
             for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
                 rewards = [compute_reward(pθ, c, x, z) for z in z_list]
                 batch_rewards.extend(rewards)
-                all_rewards.append(max(rewards))
-                best_z = z_list[rewards.index(max(rewards))]
+                best_idx, best_z = select_best_rationale(
+                    c,
+                    x,
+                    z_list,
+                    rewards,
+                    use_groq=USE_GROQ_TIEBREAKER
+                )
+                all_rewards.append(rewards[best_idx])
                 new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
             avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
             log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")

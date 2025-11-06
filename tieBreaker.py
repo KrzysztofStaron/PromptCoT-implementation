@@ -1,5 +1,6 @@
 # tieBreaker.py — Quality gate using Groq LLM when reward signal is ambiguous
 import json
+import re
 import os
 import logging
 from typing import List, Tuple, Optional
@@ -94,7 +95,8 @@ The score should be:
             }
         ],
         "temperature": 0.1,  # Low temperature for consistent evaluation
-        "max_tokens": 200
+        "max_tokens": 200,
+        "response_format": {"type": "json_object"}
     }
     
     try:
@@ -102,24 +104,49 @@ The score should be:
         response.raise_for_status()
         
         result = response.json()
-        content = result["choices"][0]["message"]["content"].strip()
-        
-        # Extract JSON from response
-        if "```json" in content:
-            json_str = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            json_str = content.split("```")[1].split("```")[0].strip()
+        message = result["choices"][0]["message"]
+        content = message.get("content")
+
+        # Handle OpenRouter JSON mode (content may already be a dict or list)
+        if isinstance(content, dict):
+            evaluation = content
         else:
-            # Find JSON object
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            if start >= 0 and end > start:
-                json_str = content[start:end]
+            if isinstance(content, list):
+                content_text = "".join(
+                    part.get("text", "") if isinstance(part, dict) else str(part)
+                    for part in content
+                ).strip()
             else:
-                log.warning(f"Could not extract JSON from Groq response: {content[:100]}")
+                content_text = (content or "").strip()
+
+            if not content_text:
+                log.warning("Groq response content is empty")
+                return None
+
+            # Extract JSON from response
+            json_str = None
+
+            if "```json" in content_text:
+                json_str = content_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in content_text:
+                json_str = content_text.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = content_text
+
+            try:
+                evaluation = json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try to fix common issues (e.g., trailing comma, incomplete strings)
+                log.warning(f"JSON decode failed, attempting to fix: {json_str[:100]}")
+                # Try to extract just the score if available
+                score_match = re.search(r'"score"\s*:\s*([0-9.]+)', json_str)
+                if score_match:
+                    score = float(score_match.group(1))
+                    score = max(0.0, min(1.0, score))
+                    log.debug(f"Extracted score from partial JSON: {score:.2f}")
+                    return score
                 return None
         
-        evaluation = json.loads(json_str)
         score = float(evaluation.get("score", 0.0))
         
         # Clamp score to [0, 1]
