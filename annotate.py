@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 import openai
 import requests
 from dotenv import load_dotenv
+from datasets import load_dataset
 
 load_dotenv()
 
@@ -48,6 +49,7 @@ OLYMPIAD_SOURCE_FILES = {
     "qwq_aime2025.jsonl",
     "qwq_aime2024.jsonl",
     "hmmt_feb.jsonl",
+    "imo_2025.jsonl",
 
 }
 
