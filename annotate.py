@@ -21,12 +21,14 @@ DATA_DIR = Path("data")
 BASE_DIR = DATA_DIR / "base"
 CONCEPT_FILE = BASE_DIR / "mathematics_concepts.jsonl"
 OUTPUT_FILE = DATA_DIR / "annotated.jsonl"
+HARDNESS_CACHE_FILE = DATA_DIR / "hardness_cache.json"
+
+ #   {"name": "openai/gpt-5-mini", "provider": "openrouter", "label": "openrouter:openai/gpt-5-mini"},
+ #   {"name": "openai/gpt-4o-mini", "provider": "openrouter", "label": "openrouter:openai/gpt-4o-mini"},
+ #   {"name": "anthropic/claude-4.5-sonnet", "provider": "openrouter", "label": "openrouter:anthropic/claude-3.5-sonnet"},
 
 MODEL_CONFIGS: List[Dict[str, str]] = [
-    {"name": "openai/gpt-5", "provider": "openai", "label": "openai:gpt-5"},
-    {"name": "x-ai/grok-4", "provider": "openrouter", "label": "openrouter:x-ai/grok-4"},
-    {"name": "anthropic/claude-sonnet-4.5", "provider": "openrouter", "label": "openrouter:anthropic/claude-sonnet-4.5"},
-    {"name": "qwen/qwen3-235b-a22b-thinking-2507", "provider": "openrouter", "label": "openrouter:qwen/qwen3-235b-a22b-thinking-2507"},
+    {"name": "openai/gpt-oss-120b", "provider": "openrouter", "label": "openrouter:openai/gpt-oss-120b"},
 ]
 
 CHAT_TOKEN_PATTERN = re.compile(r"<[^>]+>")
@@ -35,10 +37,53 @@ INVALID_RATIONALE_PHRASES = [
     "the answer is",
     "final answer",
     "we get the answer",
-    "\boxed",
-    "answer:\"",
+    "\\boxed",
+    "answer:",
     "####",
 ]
+
+OLYMPIAD_SOURCE_FILES = {
+    "aime2024.jsonl",
+    "aime2025.jsonl",
+    "hmmt_feb25.jsonl",
+    "livecodebench_v5.jsonl",
+    "livecodebench_v6.jsonl",
+    "codeforces_div2.jsonl",
+    "qwq_aime2024_test.jsonl",
+    "qwq_aime2025_test.jsonl",
+}
+
+BASELINE_SOLVER_MODEL = "qwen/qwen2.5-72b-instruct"
+
+HARDNESS_CACHE: Dict[str, bool] = {}
+
+
+def load_hardness_cache() -> Dict[str, bool]:
+    if not HARDNESS_CACHE_FILE.exists():
+        return {}
+    with open(HARDNESS_CACHE_FILE, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+        return {str(k): bool(v) for k, v in data.items()}
+
+
+def save_hardness_cache() -> None:
+    with open(HARDNESS_CACHE_FILE, "w", encoding="utf-8") as handle:
+        json.dump(HARDNESS_CACHE, handle, ensure_ascii=False, indent=2)
+
+
+def expand_atomic_concepts(concepts: List[str]) -> List[str]:
+    if not concepts:
+        return []
+    expanded: List[str] = []
+    for concept in concepts:
+        if not concept:
+            continue
+        parts = [item.strip() for item in re.split(r"[,/]| and ", concept) if item.strip()]
+        if len(parts) == 1:
+            expanded.append(parts[0])
+        else:
+            expanded.extend(parts)
+    return expanded
 
 
 def load_concept_pool() -> List[str]:
@@ -50,9 +95,63 @@ def load_concept_pool() -> List[str]:
             if not line.strip():
                 continue
             data = json.loads(line)
-            pool.extend(data.get("concepts", []))
+            pool.extend(expand_atomic_concepts(data.get("concepts", [])))
     unique = list({concept.strip(): None for concept in pool}.keys())
     return unique
+
+
+def collect_atomic_concepts() -> List[str]:
+    pool: List[str] = []
+    for source in sorted(OLYMPIAD_SOURCE_FILES):
+        path_candidates = [
+            BASE_DIR / source,
+            BASE_DIR / "qwq" / source,
+            DATA_DIR / source,
+        ]
+        for candidate in path_candidates:
+            if not candidate.exists():
+                continue
+            with open(candidate, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    payload = json.loads(line)
+                    raw_prompt = payload.get("prompt") or payload.get("Problem") or ""
+                    cleaned = clean_prompt(raw_prompt)
+                    pool.extend(extract_concepts_from_problem(cleaned))
+            break
+    unique = list({concept: None for concept in pool if concept}.keys())
+    return unique
+
+
+def extract_concepts_from_problem(problem: str) -> List[str]:
+    concepts: List[str] = []
+    lowered = problem.lower()
+    keywords = {
+        "mod": "Modular arithmetic",
+        "modulo": "Modular arithmetic",
+        "remainder": "Modular arithmetic",
+        "prime": "Prime factorization",
+        "divisible": "Divisibility arguments",
+        "geometry": "Euclidean geometry",
+        "circle": "Circle geometry",
+        "triangle": "Triangle geometry",
+        "probability": "Combinatorial probability",
+        "expected": "Expected value",
+        "permutation": "Permutations and combinations",
+        "combination": "Permutations and combinations",
+        "binomial": "Binomial coefficients",
+        "polynomial": "Polynomial factorization",
+        "log": "Logarithmic transformations",
+        "limit": "Series convergence",
+        "sequence": "Sequence analysis",
+        "sum": "Summation techniques",
+        "product": "Product telescoping",
+    }
+    for needle, concept in keywords.items():
+        if needle in lowered:
+            concepts.append(concept)
+    return concepts
 
 
 def clean_prompt(raw_prompt: str) -> str:
@@ -73,17 +172,84 @@ def resolve_solution(payload: Dict[str, str]) -> Optional[str]:
     return None
 
 
+def attempt_baseline_solve(problem: str) -> str:
+    if not OPENROUTER_API_KEY:
+        return ""
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/PromptCoT",
+        "X-Title": "PromptCoT Hardness Filter",
+    }
+    payload = {
+        "model": BASELINE_SOLVER_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "Attempt to solve this Olympiad math problem. Respond with the boxed final answer "
+                    "if you are certain, otherwise say 'unsure'.\n\n"
+                    f"Problem:\n{problem}"
+                ),
+            }
+        ],
+        "max_tokens": 64,
+        "temperature": 0.1,
+        "provider": {
+            "sort": "throughput",
+        },
+    }
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data["choices"][0]["message"].get("content", "")
+        if isinstance(content, list):
+            text = "".join(
+                str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                for part in content
+            ).strip()
+            return text
+        if isinstance(content, str):
+            return content.strip()
+        return ""
+    except Exception:
+        return ""
+
+
+def is_hard_problem(problem: str, save_immediately: bool = False) -> bool:
+    if problem in HARDNESS_CACHE:
+        return HARDNESS_CACHE[problem]
+    attempt = attempt_baseline_solve(problem)
+    lowered = attempt.lower()
+    hard = True
+    if lowered:
+        if "\\boxed" in lowered or "answer" in lowered:
+            hard = False
+        if "unsure" in lowered or "cannot" in lowered or "fail" in lowered:
+            hard = True
+    HARDNESS_CACHE[problem] = hard
+    if save_immediately:
+        save_hardness_cache()
+    return hard
+
+
 def collect_problem_bank() -> List[Dict[str, str]]:
     dataset_paths: List[Path] = []
     if BASE_DIR.exists():
-        dataset_paths.extend(
-            [p for p in BASE_DIR.glob("*.jsonl") if p.name != CONCEPT_FILE.name]
-        )
-        qwq_dir = BASE_DIR / "qwq"
-        if qwq_dir.exists():
-            dataset_paths.extend(list(qwq_dir.glob("*.jsonl")))
+        for candidate in BASE_DIR.rglob("*.jsonl"):
+            if candidate.name == CONCEPT_FILE.name:
+                continue
+            if candidate.name in OLYMPIAD_SOURCE_FILES:
+                dataset_paths.append(candidate)
 
     bank: List[Dict[str, str]] = []
+    new_cache_entries = 0
     for dataset_path in dataset_paths:
         with open(dataset_path, "r", encoding="utf-8") as handle:
             for line_number, line in enumerate(handle):
@@ -92,11 +258,16 @@ def collect_problem_bank() -> List[Dict[str, str]]:
                 payload = json.loads(line)
                 raw_prompt = payload.get("prompt") or payload.get("Problem") or payload.get("output")
                 solution = resolve_solution(payload)
-                if not raw_prompt or not solution:
+                if not raw_prompt:
                     continue
                 problem = clean_prompt(raw_prompt)
                 if not problem:
                     continue
+                was_cached = problem in HARDNESS_CACHE
+                if not is_hard_problem(problem):
+                    continue
+                if not was_cached:
+                    new_cache_entries += 1
                 idx = payload.get("idx")
                 if idx is None:
                     idx = line_number
@@ -109,6 +280,9 @@ def collect_problem_bank() -> List[Dict[str, str]]:
                         "solution": solution,
                     }
                 )
+    if new_cache_entries > 0:
+        save_hardness_cache()
+        print(f"💾 Saved {new_cache_entries} new hardness results to cache")
     return bank
 
 
@@ -151,37 +325,55 @@ def is_design_rationale(text: str) -> bool:
     return True
 
 
-def build_prompt(problem: str, solution: str, concept_examples: List[str]) -> str:
-    bullets = "\n".join(f"- {concept}" for concept in concept_examples)
-    return (
-        "You are reverse-engineering a contest problem. Study the final prompt and its worked solution, then "
-        "produce a meta-level synthesis plan that describes how to craft such a problem before it is written. "
-        "Do NOT solve the problem again or present numeric answers. Focus on the creative blueprint: selecting core tools, "
-        "layering obstacles, stress-testing edge cases, and guaranteeing the final prompt remains coherent and difficult.\n\n"
-        f"Problem (already authored):\n{problem}\n\n"
-        f"Author's solution (for reference only—do not replicate):\n{solution}\n\n"
-        "Concept inspirations (choose the best fitting, do not copy verbatim):\n"
-        f"{bullets}\n\n"
-        "Return a JSON object with this schema:\n"
-        "{\n  \"concepts\": [\"concept1\", \"concept2\", \"concept3\", \"concept4\", \"concept5\"],\n"
-        "  \"rationale\": \"design blueprint describing how to assemble the problem (no final answers)\"\n}"
-        "\nGuidelines:\n"
-        "- Concepts: exactly five concise handles (e.g., 'Modular orders', 'Chinese Remainder scaffolding').\n"
-        "- Rationale: multi-step creative plan describing how to combine the concepts, inject constraints, and iterate until the prompt is challenging.\n"
-        "- Do NOT restate the original solution, compute values, or mention final answers.\n"
-        "- Use imperative or process-oriented language (e.g., 'Introduce...', 'Force...', 'Leverage counterexamples...').\n"
-    )
+def build_prompt(problem: str, concept_examples: List[str]) -> str:
+    """
+    PromptCoT 2.0 Cold-Start Prompt: (c) → (c, z)
+    Input: problem (x), concept pool
+    Output: JSON { "concepts": [...5...], "rationale": "design plan" }
+    NO SOLUTION SHOWN. NO NUMBERS. PURE META-REASONING.
+    """
+    # Sample 15–25 atomic concepts for diversity
+    sample_size = min(25, len(concept_examples))
+    selected = random.sample(concept_examples, sample_size)
+    bullets = "\n".join(f"- {c}" for c in selected)
+
+    return f"""You are an **Olympiad problem architect**. Your task is to **reverse-engineer a design blueprint** (`z`) that explains **how to construct a problem like the one below**, using **exactly 5 concepts** from the list.
+
+**DO NOT solve the problem.**  
+**DO NOT compute any numbers.**  
+**DO NOT mention the final answer.**  
+**DO NOT restate the solution path.**
+
+---
+
+**Target Problem (already written):**
+{problem.strip()}
+
+---
+
+**Concept Bank, feel free to use them, or invent your own:**
+{bullets}
+
+---
+
+**Output JSON only** (no extra text):
+```json
+{{
+  "concepts": ["Concept1", "Concept2", "Concept3", "Concept4", "Concept5"],
+  "rationale": "Multi-step design plan, on how to construct the problem using the concepts. Example: Select..., Force..., Weave..., Ensure..., Stress-test..., Refine..."
+}}
+
+```"""
 
 
 def annotate_with_model(
     problem: str,
-    solution: str,
     model_cfg: Dict[str, str],
     concept_pool: List[str],
 ) -> Optional[Dict[str, object]]:
     sample_size = min(20, len(concept_pool))
     concept_examples = random.sample(concept_pool, sample_size) if sample_size else []
-    prompt = build_prompt(problem, solution, concept_examples)
+    prompt = build_prompt(problem, concept_examples)
 
     try:
         if model_cfg["provider"] == "openai":
@@ -203,8 +395,11 @@ def annotate_with_model(
                 "model": model_cfg["name"],
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
-                "max_tokens": 512,
+                "max_tokens": 2048,
                 "response_format": {"type": "json_object"},
+                "provider": {
+                    "sort": "throughput",
+                },
             }
             response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -269,7 +464,13 @@ def select_active_models() -> List[Dict[str, str]]:
 
 
 def main() -> None:
-    concept_pool = load_concept_pool()
+    global HARDNESS_CACHE
+    HARDNESS_CACHE = load_hardness_cache()
+    cache_size = len(HARDNESS_CACHE)
+    if cache_size > 0:
+        print(f"📦 Loaded {cache_size} cached hardness results")
+    
+    concept_pool = collect_atomic_concepts()
     if not concept_pool:
         print("⚠️  Concept pool is empty; continuing but prompts will omit examples.")
 
@@ -300,7 +501,6 @@ def main() -> None:
         model_cfg = active_models[model_index % len(active_models)]
         annotation = annotate_with_model(
             item["problem"],
-            item["solution"],
             model_cfg,
             concept_pool,
         )
