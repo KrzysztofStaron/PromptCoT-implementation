@@ -43,14 +43,12 @@ INVALID_RATIONALE_PHRASES = [
 ]
 
 OLYMPIAD_SOURCE_FILES = {
-    "aime2024.jsonl",
     "aime2025.jsonl",
-    "hmmt_feb25.jsonl",
-    "livecodebench_v5.jsonl",
-    "livecodebench_v6.jsonl",
-    "codeforces_div2.jsonl",
-    "qwq_aime2024_test.jsonl",
-    "qwq_aime2025_test.jsonl",
+    "aime2024.jsonl",
+    "qwq_aime2025.jsonl",
+    "qwq_aime2024.jsonl",
+    "hmmt_feb.jsonl",
+
 }
 
 BASELINE_SOLVER_MODEL = "qwen/qwen2.5-72b-instruct"
@@ -394,8 +392,11 @@ def annotate_with_model(
             payload = {
                 "model": model_cfg["name"],
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 2048,
+                "temperature": 0.9,
+                "top_p": 0.95,
+                "max_tokens": 4096,
+                "presence_penalty": 0.15,
+                "frequency_penalty": 0.0,
                 "response_format": {"type": "json_object"},
                 "provider": {
                     "sort": "throughput",
