@@ -45,3 +45,6 @@ tb_logs/
 *.pickle
 *.pkl
 !data/*.jsonl
+
+data\base\math_problems.jsonl
+data\hardness_cache.json
