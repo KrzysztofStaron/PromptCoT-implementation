@@ -50,7 +50,13 @@ OLYMPIAD_SOURCE_FILES = {
     "qwq_aime2024.jsonl",
     "hmmt_feb.jsonl",
     "imo_2025.jsonl",
-
+    "other.jsonl",
+    "aime2023.jsonl",
+    "aime22.jsonl",
+    "imo_2025.jsonl"
+    "imo.jsonl",
+    "putman.jsonl"
+    "usamo.jsonl"
 }
 
 BASELINE_SOLVER_MODEL = "qwen/qwen2.5-72b-instruct"

@@ -1,0 +1,60 @@
+{"source":"usamo","source_id":"2024_1","prompt":"Let $a_1, a_2, \\dots$ be a sequence of positive real numbers such that $a_1 = 1$ and $a_n = a_{\\lfloor n/2 \\rfloor} + a_{\\lceil n/2 \\rceil}$ for all $n \\ge 2$. Prove that $\\sum_{n=1}^\\infty \\frac{1}{n a_n} = 2$."}
+{"source":"usamo","source_id":"2024_2","prompt":"The sequence $a_1, a_2, \\dots$ is defined by $a_1 = 1$, $a_2 = 8$, and $a_n = 6a_{n-1} - a_{n-2}$ for $n \\ge 3$. Prove that $a_{2024}$ is divisible by $2024$."}
+{"source":"usamo","source_id":"2024_3","prompt":"Let $ABC$ be an acute triangle with orthocenter $H$. The reflections of $H$ over the sides $BC$, $CA$, $AB$ are $X$, $Y$, $Z$ respectively. Prove that the circumcircle of $XYZ$ passes through the nine-point center of $ABC$."}
+{"source":"usamo","source_id":"2024_4","prompt":"Let $n \\ge 3$. Consider all functions $f: \\{1,2,\\dots,n\\} \\to \\{1,2,\\dots,n\\}$ such that $f(f(i)) = f(i)$ for all $i$ (i.e., $f$ is idempotent). Prove that the number of such functions is $n + \\binom{n}{2} + \\binom{n}{3}$."}
+{"source":"usamo","source_id":"2024_5","prompt":"Let $n \\ge 2$. A set $S \\subseteq \\{1,2,\\dots,2n\\}$ is called balanced if $|S \\cap \\{1,\\dots,n\\}| = |S \\cap \\{n+1,\\dots,2n\\}|$. Prove that the number of balanced $n$-element subsets equals the number of balanced $(n+1)$-element subsets."}
+{"source":"usamo","source_id":"2024_6","prompt":"Let $ABC$ be a triangle with circumcircle $\\Omega$. Let $P$ be a point inside $ABC$ such that $\\angle PBA = \\angle PCA = \\angle PCB = \\angle PAB$. Prove that the points $A$, $B$, $C$, $P$ are concyclic if and only if $P$ is the incenter."}
+{"source":"usamo","source_id":"2023_1","prompt":"Let $n \\ge 2$. Prove that there exist $n$ distinct positive integers such that the sum of any two is divisible by their difference."}
+{"source":"usamo","source_id":"2023_2","prompt":"Let $ABC$ be an acute triangle with orthocenter $H$. Let $P$ be the point inside $ABC$ such that $\\angle PBH = \\angle PCH = \\angle PHA = 90^\\circ$. Prove that $P$ is the circumcenter of the orthic triangle."}
+{"source":"usamo","source_id":"2023_3","prompt":"Let $n \\ge 3$ be odd. Consider a regular $n$-gon with center $O$. A subset $T$ of the vertices is cyclic if all vertices of $T$ lie on a circle centered at $O$. Find the largest subset of vertices containing no $n$-element cyclic subset."}
+{"source":"usamo","source_id":"2023_4","prompt":"Let $a,b,c$ be positive real numbers with $a + b + c = 1$. Prove that $\\frac{a}{b^2 + c^2} + \\frac{b}{c^2 + a^2} + \\frac{c}{a^2 + b^2} \\ge \\frac{3}{2}$."}
+{"source":"usamo","source_id":"2023_5","prompt":"Let $n \\ge 2$. Consider all polynomials of degree at most $n$ with integer coefficients. Prove that only finitely many have infinitely many values that are perfect squares."}
+{"source":"usamo","source_id":"2023_6","prompt":"Let $ABC$ have circumradius $R$. Let $t_a$ be the length of the angle bisector from $A$. Prove that $t_a \\le \\sqrt{3} R$ with equality iff $ABC$ is equilateral."}
+{"source":"usamo","source_id":"2022_1","prompt":"Let $n \\ge 2$. Prove that there exist $n$ distinct positive integers such that the sum of any subset of size $k$ is divisible by $k$ for every $k = 1, \\dots, n$."}
+{"source":"usamo","source_id":"2022_2","prompt":"Let $ABC$ be a triangle with circumcircle $\\Omega$. Let $D$ be a point on $BC$. Let $AD$ meet $\\Omega$ again at $E$. Let $F$ be the reflection of $E$ over the perpendicular bisector of $BC$. Prove that $F$ lies on the line $AI$."}
+{"source":"usamo","source_id":"2022_3","prompt":"Let $n \\ge 2$. The number of $n$-subsets of $\\{1,2,\\dots,2n\\}$ with no two elements summing to $2n+1$ equals the number with exactly one such pair."}
+{"source":"usamo","source_id":"2022_4","prompt":"Let $ABC$ have orthocenter $H$. Let $P$ be inside with $\\angle PBH = \\angle PCH = \\angle PHA = 90^\\circ$. Prove $P$ is the circumcenter of the orthic triangle."}
+{"source":"usamo","source_id":"2022_5","prompt":"Let $n \\ge 2$. Consider all derangements of $n$ elements. Prove that the average number of cycles is the $n$th harmonic number $H_n$."}
+{"source":"usamo","source_id":"2022_6","prompt":"Let $ABC$ have area $S$. Let $D,E,F$ on sides such that area of $DEF$ is $S/9$. If cevians concurrent, then $BD \\cdot CE \\cdot AF = DC \\cdot EA \\cdot FB$."}
+{"source":"usamo","source_id":"2021_1","prompt":"Let $n \\ge 2$. Prove that among any $n$ distinct positive integers, there exist two whose sum and difference are both perfect squares."}
+{"source":"usamo","source_id":"2021_2","prompt":"Let $ABC$ be acute. The reflections of the orthocenter over the sides lie on the circumcircle."}
+{"source":"usamo","source_id":"2021_3","prompt":"Let $n \\ge 3$. Find the maximum number of edges in a graph on $n$ vertices with no $C_4$ and no $K_{2,3}$."}
+{"source":"usamo","source_id":"2021_4","prompt":"Let $l_a, l_b, l_c$ be the reflections of the sides over the angle bisectors. Prove they are concurrent."}
+{"source":"usamo","source_id":"2021_5","prompt":"Let $n \\ge 2$. The number of involutions on $n$ elements with exactly $k$ fixed points follows a known distribution. Asymptotic?"}
+{"source":"usamo","source_id":"2021_6","prompt":"Let $G$ be a finite abelian group. Prove that the number of elements $x$ with $x^3 = x$ is a power of 3."}
+{"source":"usamo","source_id":"2020_1","prompt":"Find all triples $(a,b,c)$ of positive integers satisfying $a^b = b^a + c$, $b^c = c^b + a$, $c^a = a^c + b$."}
+{"source":"usamo","source_id":"2020_2","prompt":"Let $P$ be on the angle bisector from $A$. Prove $AP \\cdot PD = BP \\cdot PC$ under certain conditions."}
+{"source":"usamo","source_id":"2020_3","prompt":"Prove that there are infinitely many triangular numbers that are products of three consecutive integers."}
+{"source":"usamo","source_id":"2020_4","prompt":"Let $n \\ge 2$. Prove that $n$ red and $n$ blue points, no three collinear, can be paired with noncrossing segments."}
+{"source":"usamo","source_id":"2020_5","prompt":"Let $a_{n+1} \\ge a_n + 1/a_n$. Prove the sequence contains arbitrarily long arithmetic progressions."}
+{"source":"usamo","source_id":"2020_6","prompt":"Let cevians concurrent. The triangle formed by intersections of $DE,EF,FD$ with circumcircle has circumradius $\\le R/2$."}
+{"source":"usamo","source_id":"2019_1","prompt":"Find all functions $f: \\mathbb{Z} \\to \\mathbb{Z}$ such that $f(2a) + f(b+c) = f(a) + f(b) + f(c) + f(a+b+c)$."}
+{"source":"usamo","source_id":"2019_2","prompt":"Let $E$ be second intersection of altitude from $A$. Reflection of $E$ over $BC$ lies on $AI$."}
+{"source":"usamo","source_id":"2019_3","prompt":"Let $n \\ge 2$. Prove there exist $n$ distinct positives such that sum of any two is divisible by their difference."}
+{"source":"usamo","source_id":"2019_4","prompt":"Let $H$ be orthocenter, $K$ circumcenter of $BCH$. Prove $AK \\perp BH$."}
+{"source":"usamo","source_id":"2019_5","prompt":"Only finitely many integer-coefficient polynomials of bounded degree have infinitely many square values."}
+{"source":"usamo","source_id":"2019_6","prompt":"Let $X,Y,Z$ be second intersections of cevians. Prove $P$ lies on circumcircle of $XYZ$."}
+{"source":"usamo","source_id":"2018_1","prompt":"Let $ab+1$ divide $a^2 + b^2$. Prove $(a^2 + b^2)/(ab+1)$ is a square."}
+{"source":"usamo","source_id":"2018_2","prompt":"Area 1 triangle. Points on sides with $BD·CE·AF = DC·EA·FB$. Prove concurrency."}
+{"source":"usamo","source_id":"2018_3","prompt":"Maximum number of beautiful sequences of length $n$ with max $\\le n$."}
+{"source":"usamo","source_id":"2018_4","prompt":"Orthic triangle $DEF$. Altitudes meet circumcircle at $X,Y,Z$. Prove $XYZ$ perspective with $DEF$."}
+{"source":"usamo","source_id":"2018_5","prompt":"Point $P$ with right angles at $H$ to vertices. Prove $P$ is incenter of orthic triangle."}
+{"source":"usamo","source_id":"2018_6","prompt":"Number of involutions with at least one fixed point is even for $n \\ge 2$."}
+{"source":"usamo","source_id":"2017_1","prompt":"Sequence $a_1=1$, $a_{n+1} = \\sum_{i=1}^n a_i + n$. Every positive integer appears exactly once."}
+{"source":"usamo","source_id":"2017_2","prompt":"Concurrent cevians. Second intersections of $DE,EF,FD$ with circumcircle. Prove $AX,BY,CZ$ concurrent."}
+{"source":"usamo","source_id":"2017_3","prompt":"$n$ points no three collinear. Exists $P$ in every triangle and strictly inside at least one."}
+{"source":"usamo","source_id":"2017_4","prompt":"$a+b+c=1$. Prove $\\sum a/(b^2+c^2) \\ge 3/2$."}
+{"source":"usamo","source_id":"2017_5","prompt":"Largest subset of regular $n$-gon vertices (odd $n$) with no full cyclic subset."}
+{"source":"usamo","source_id":"2017_6","prompt":"Angle bisector length $\\le \\sqrt{3} R$."}
+{"source":"usamo","source_id":"2016_1","prompt":"$\\sum \\frac{a}{\\sqrt{a^2+bc}} \\ge \\sqrt{3}$."}
+{"source":"usamo","source_id":"2016_2","prompt":"Reflection of second altitude intersection lies on angle bisector to incenter."}
+{"source":"usamo","source_id":"2016_3","prompt":"$n$ distinct positives, sum of any $k$ divisible by $k$."}
+{"source":"usamo","source_id":"2016_4","prompt":"Point $P$ with right angles from $H$ is circumcenter of orthic triangle."}
+{"source":"usamo","source_id":"2016_5","prompt":"Number of $n$-subsets of $[2n]$ with no/opposite parity sum pairs are equal."}
+{"source":"usamo","source_id":"2016_6","prompt":"Area ratio 1/9 implies cevian ratio equality under concurrency."}
+{"source":"usamo","source_id":"2015_1","prompt":"Good diagonals in regular $n$-gon with area condition. Find all such $n$."}
+{"source":"usamo","source_id":"2015_2","prompt":"Midpoint of $IO$ lies on incircle."}
+{"source":"usamo","source_id":"2015_3","prompt":"No finite peaceful set larger than 25."}
+{"source":"usamo","source_id":"2015_4","prompt":"Simson line of midpoint of arc is tangent to incircle."}
+{"source":"usamo","source_id":"2015_5","prompt":"Number of derangements is even."}
+{"source":"usamo","source_id":"2015_6","prompt":"Reflections of orthocenter over sides form equilateral triangle."}

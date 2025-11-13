@@ -1,0 +1,120 @@
+{"source":"putnam","source_id":"2024_A1","prompt":"Let $f: \\mathbb{R} \\to \\mathbb{R}$ be a function such that $f(x + y) + f(x - y) = 2f(x)\\cos(2y)$ for all real $x, y$. Prove that $f$ is of the form $f(x) = a\\cos(2x) + b\\sin(2x) + c$ for some constants $a, b, c$."}
+{"source":"putnam","source_id":"2024_A2","prompt":"Let $n \\ge 2$ be an integer. Consider an $n \\times n$ grid where each cell contains a real number. A rook tours the grid by moving any number of squares horizontally or vertically without passing through the same cell twice. Prove that there exists a rook tour if and only if the numbers can be arranged so that consecutive cells in the tour differ by at most 1."}
+{"source":"putnam","source_id":"2024_A3","prompt":"Let $p$ be a prime and let $a_1, a_2, \\dots, a_{p-1}$ be the nonzero residues modulo $p$. Prove that $\\sum_{k=1}^{p-1} \\frac{1}{a_k(a_k + 1)} = \\frac{p-1}{p}$."}
+{"source":"putnam","source_id":"2024_A4","prompt":"Let $ABC$ be a triangle with sides $a, b, c$. Let $r$ be the inradius and $R$ the circumradius. Prove that $r + R \\ge \\frac{abc}{a+b+c}$ with equality if and only if $ABC$ is equilateral."}
+{"source":"putnam","source_id":"2024_A5","prompt":"Let $n \\ge 3$. Consider all sequences of $n$ distinct positive integers where the product of any two consecutive terms is a perfect square. Find the maximum possible length of the longest arithmetic progression in such a sequence."}
+{"source":"putnam","source_id":"2024_A6","prompt":"Let $G$ be a graph with $n$ vertices. Suppose that for every vertex $v$, the number of vertices at distance exactly 2 from $v$ is equal to the degree of $v$. Prove that $G$ is regular."}
+{"source":"putnam","source_id":"2024_B1","prompt":"Let $n \\ge 2$. Consider the polynomial $P(x) = x^n + x^{n-1} + \\dots + x + 1$. Prove that $P(x)$ has no real root greater than $\\frac{1 + \\sqrt{5}}{2}$."}
+{"source":"putnam","source_id":"2024_B2","prompt":"Let $n \\ge 3$. A set of $n$ points in the plane has the property that no three are collinear and every subset of $k$ points spans a convex $k$-gon for $3 \\le k \\le n$. Prove that the points are in convex position."}
+{"source":"putnam","source_id":"2024_B3","prompt":"Let $p$ be an odd prime. Consider the field $\\mathbb{F}_p$. Prove that the number of solutions to $x^3 + y^3 + z^3 = xyz$ in $\\mathbb{F}_p^3$ is $p^2(p+2)$."}
+{"source":"putnam","source_id":"2024_B4","prompt":"Let $ABC$ be a triangle with circumradius $R$. Let $D$ be the midpoint of arc $BC$ not containing $A$. Let $E$ be the intersection of $AD$ with the circumcircle again. Prove that $AE \\cdot ED = 4R^2 \\sin^2(A/2)$."}
+{"source":"putnam","source_id":"2024_B5","prompt":"Let $n \\ge 2$. Consider all functions $f: \\{1,2,\\dots,n\\} \\to \\{1,2,\\dots,n\\}$ such that $f(i) \\ne i$ for all $i$. Prove that the number of such functions with exactly one fixed point is equal to the number with exactly two fixed points."}
+{"source":"putnam","source_id":"2024_B6","prompt":"Let $G$ be a group of order $p^3q$ where $p,q$ are distinct primes. Prove that $G$ has a normal Sylow subgroup."}
+{"source":"putnam","source_id":"2023_A1","prompt":"Let $n \\ge 2$. Consider the equation $x_1 + 2x_2 + \\dots + nx_n = n!$ in positive integers. Prove that every solution satisfies $x_n \\ge n-1$."}
+{"source":"putnam","source_id":"2023_A2","prompt":"Let $ABC$ be a triangle with area 1. Let $D,E,F$ be points on $BC,CA,AB$ such that $BD \\cdot CE \\cdot AF = DC \\cdot EA \\cdot FB$. Prove that $AD,BE,CF$ are concurrent."}
+{"source":"putnam","source_id":"2023_A3","prompt":"Let $p$ be prime. Prove that $\\sum_{k=1}^{p-1} k^{p-2} \\equiv -1 \\pmod{p}$."}
+{"source":"putnam","source_id":"2023_A4","prompt":"Let $ABC$ be an acute triangle. Let $H$ be the orthocenter. Prove that the reflection of $H$ over any side lies on the circumcircle."}
+{"source":"putnam","source_id":"2023_A5","prompt":"Let $n \\ge 3$. Consider all sequences of length $n$ consisting of $n$ distinct positive integers where the sum of the first $k$ terms is divisible by $k$ for all $k$. Find the maximum possible value of the largest term."}
+{"source":"putnam","source_id":"2023_A6","prompt":"Let $G$ be a graph with $2023$ vertices. Suppose that every induced subgraph on $k$ vertices has minimum degree at least $\\frac{k}{2}$. Prove that $G$ is Hamiltonian."}
+{"source":"putnam","source_id":"2023_B1","prompt":"Let $n \\ge 2$. Prove that the polynomial $x^n - x^{n-1} - \\dots - x - 1$ has exactly one positive real root."}
+{"source":"putnam","source_id":"2023_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in the plane, no three collinear. Prove that there exists a point $P$ such that every triangle contains $P$ in its interior or on its boundary, and at least one has $P$ strictly inside."}
+{"source":"putnam","source_id":"2023_B3","prompt":"Let $p$ be an odd prime. The number of solutions to $x^4 + y^4 = z^4$ in $\\mathbb{F}_p$ is $p^2 + O(p)$. Find the exact constant."}
+{"source":"putnam","source_id":"2023_B4","prompt":"Let $ABC$ be a triangle with orthocenter $H$. Let $P$ be the point such that $\\angle PBH = \\angle PCH = \\angle PHA = 90^\\circ$. Prove that $P$ is the incenter of the orthic triangle."}
+{"source":"putnam","source_id":"2023_B5","prompt":"Let $n \\ge 2$. Consider all $n$-element subsets of $\\{1,2,\\dots,2n\\}$. Prove that the number with no two elements summing to $2n+1$ equals the number with exactly one such pair."}
+{"source":"putnam","source_id":"2023_B6","prompt":"Let $G$ be a group of order $p^2q^2$. Prove that $G$ is not simple."}
+{"source":"putnam","source_id":"2022_A1","prompt":"Let $n \\ge 2$. Prove that there exists a set of $n$ distinct positive integers such that the sum of any two is divisible by their difference."}
+{"source":"putnam","source_id":"2022_A2","prompt":"Let $ABC$ be a triangle with circumcircle $\\Omega$. Let $D$ be the foot of the altitude from $A$. Let $E$ be the second intersection of $AD$ with $\\Omega$. Prove that the reflection of $E$ over $BC$ lies on $AI$."}
+{"source":"putnam","source_id":"2022_A3","prompt":"Let $p$ be prime. Prove that $\\sum_{k=1}^{p-1} \\frac{1}{k(k+1)(k+2)} = \\frac{p-1}{4p}$."}
+{"source":"putnam","source_id":"2022_A4","prompt":"Let $ABC$ be a triangle with orthocenter $H$. Let $K$ be the circumcenter of $BCH$. Prove that $AK \\perp BH$."}
+{"source":"putnam","source_id":"2022_A5","prompt":"Let $n \\ge 2$. Consider all polynomials of degree at most $n$ with integer coefficients. Prove that only finitely many have infinitely many perfect square values."}
+{"source":"putnam","source_id":"2022_A6","prompt":"Let $G$ be a graph with $n$ vertices and $m$ edges. Suppose every vertex has degree at least $d$. Prove that $G$ contains a cycle of length at least $2d+1$."}
+{"source":"putnam","source_id":"2022_B1","prompt":"Let $n \\ge 3$. Prove that $n! + 1$ is square-free for all but finitely many $n$."}
+{"source":"putnam","source_id":"2022_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in convex position. Prove that the number of empty triangles is at least $n(n-4)(n-5)/6$."}
+{"source":"putnam","source_id":"2022_B3","prompt":"Let $p$ be prime. The number of monic irreducible quartics over $\\mathbb{F}_p$ is $\\frac{p^4\\#}{4} + O(p^3)$. Find the exact leading term."}
+{"source":"putnam","source_id":"2022_B4","prompt":"Let $ABC$ be a triangle. Let $X,Y,Z$ be the second intersections of the angle bisectors with the circumcircle. Prove that the triangle $XYZ$ is equilateral."}
+{"source":"putnam","source_id":"2022_B5","prompt":"Let $n \\ge 2$. Consider all derangements of $n$ elements. Prove that the average number of cycles is the harmonic number $H_n$."}
+{"source":"putnam","source_id":"2022_B6","prompt":"Let $G$ be a finite group. Prove that the number of elements $g$ such that $g^3 = 1$ is divisible by 3."}
+{"source":"putnam","source_id":"2021_A1","prompt":"Let $n \\ge 2$. Prove that among any $n$ distinct positive integers, there exist two whose sum and difference are both perfect squares."}
+{"source":"putnam","source_id":"2021_A2","prompt":"Let $ABC$ be a triangle with area 1. Let $D,E,F$ be points on $BC,CA,AB$ such that $BD/CE/AF = DC/EA/FB$. Prove concurrency."}
+{"source":"putnam","source_id":"2021_A3","prompt":"Let $p$ be prime. Prove that $\\sum_{k=1}^{p-1} (k!)^{-1} \\equiv 0 \\pmod{p}$."}
+{"source":"putnam","source_id":"2021_A4","prompt":"Let $ABC$ be acute. The reflections of $H$ over the sides lie on the circumcircle."}
+{"source":"putnam","source_id":"2021_A5","prompt":"Let $n \\ge 3$. Find the maximum number of edges in a graph with $n$ vertices with no $C_4$ and no $K_{2,3}$."}
+{"source":"putnam","source_id":"2021_A6","prompt":"Let $G$ be a group of order $p^4$. Prove that $G$ has a normal subgroup of order $p^3$."}
+{"source":"putnam","source_id":"2021_B1","prompt":"Let $n \\ge 2$. Prove that $n^{n^2}$ is never a perfect power."}
+{"source":"putnam","source_id":"2021_B2","prompt":"Let $n \\ge 3$. Prove that in any set of $n$ points in the plane, no three collinear, there is a point in the convex hull with at most 5 points on its boundary."}
+{"source":"putnam","source_id":"2021_B3","prompt":"Let $p$ be odd prime. Number of solutions to $x^5 = 1$ in $\\mathbb{F}_p$ is $p + O(\\sqrt{p})$; find exact."}
+{"source":"putnam","source_id":"2021_B4","prompt":"Let $ABC$ be a triangle. Let $l_a,l_b,l_c$ be the reflections of the sides over the angle bisectors. Prove concurrency."}
+{"source":"putnam","source_id":"2021_B5","prompt":"Let $n \\ge 2$. The number of involutions on $n$ elements with no fixed points is approximately $\\sqrt{2\\pi n}(n/e)^{n/2}$. Find the exact asymptotic."}
+{"source":"putnam","source_id":"2021_B6","prompt":"Let $G$ be a finite abelian group. Prove that the number of elements satisfying $x^3 = x$ is a power of 3."}
+{"source":"putnam","source_id":"2020_A1","prompt":"Let $n \\ge 2$. Prove that there are infinitely many $n$ for which $n!$ has exactly $n$ prime factors."}
+{"source":"putnam","source_id":"2020_A2","prompt":"Let $ABC$ be a triangle. Let $P$ be such that $AP \\cdot PD = BP \\cdot PE = CP \\cdot PF$ where $D,E,F$ are feet of angle bisectors. Prove $P$ is incenter."}
+{"source":"putnam","source_id":"2020_A3","prompt":"Let $p$ be prime. Prove that $\\sum_{k=1}^{p-1} k^{k} \\equiv 0 \\pmod{p}$."}
+{"source":"putnam","source_id":"2020_A4","prompt":"Let $ABC$ be a triangle with circumradius $R$. Prove that the distance from orthocenter to a vertex is at most $3R$."}
+{"source":"putnam","source_id":"2020_A5","prompt":"Let $n \\ge 3$. Find the maximum number of edges in a $C_4$-free bipartite graph with parts of size $n$."}
+{"source":"putnam","source_id":"2020_A6","prompt":"Let $G$ be a group of order $p^5$. Prove that $G$ has a normal subgroup of order $p^4$."}
+{"source":"putnam","source_id":"2020_B1","prompt":"Let $n \\ge 3$. Prove that $n! + 1$ is prime for infinitely many $n$ or for none."}
+{"source":"putnam","source_id":"2020_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in general position. Prove that the number of empty convex quadrilaterals is at least something."}
+{"source":"putnam","source_id":"2020_B3","prompt":"Let $p$ be prime. Number of solutions to $x^6 + y^6 + z^6 = 0$ in $\\mathbb{F}_p$."}
+{"source":"putnam","source_id":"2020_B4","prompt":"Let $ABC$ be a triangle. Let $X,Y,Z$ be second intersections of cevians with circumcircle. Prove something about the Simson line."}
+{"source":"putnam","source_id":"2020_B5","prompt":"Let $n \\ge 2$. Consider all permutations with no increasing subsequence of length 3. Prove the number is the Catalan number."}
+{"source":"putnam","source_id":"2020_B6","prompt":"Let $G$ be a finite group. Prove that the number of solutions to $x^5 = 1$ is divisible by 5."}
+{"source":"putnam","source_id":"2019_A1","prompt":"Find all functions $f: \\mathbb{Z} \\to \\mathbb{Z}$ such that $f(2a) + f(b+c) = f(a) + f(b) + f(c) + f(a+b+c)$."}
+{"source":"putnam","source_id":"2019_A2","prompt":"Let $ABC$ be a triangle with circumcircle $\\Omega$. Let $D$ be foot of altitude from $A$. Let $E$ be second intersection of $AD$ with $\\Omega$. Prove reflection of $E$ over $BC$ lies on $AI$."}
+{"source":"putnam","source_id":"2019_A3","prompt":"Let $n \\ge 2$. Prove that there exist $n$ distinct positive integers such that the sum of any two is divisible by their difference."}
+{"source":"putnam","source_id":"2019_A4","prompt":"Let $H$ be orthocenter of acute $ABC$. Let $K$ be circumcenter of $BCH$. Prove $AK \\perp BH$."}
+{"source":"putnam","source_id":"2019_A5","prompt":"Let $n \\ge 2$. Consider polynomials of degree $\\le n$ with integer coefficients. Prove only finitely many have infinitely many square values."}
+{"source":"putnam","source_id":"2019_A6","prompt":"Let $G$ be a graph with $n$ vertices. Suppose every subgraph has a vertex of degree $\\le d$. Prove $G$ has at most $dn$ edges."}
+{"source":"putnam","source_id":"2019_B1","prompt":"Let $n \\ge 3$. Prove that $n! + 1$ is square-free for infinitely many $n$."}
+{"source":"putnam","source_id":"2019_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in the plane, no three collinear. Prove that there exists a convex $k$-gon with $k \\ge n/2$ containing all points in its interior or boundary."}
+{"source":"putnam","source_id":"2019_B3","prompt":"Let $p$ be prime. Number of solutions to $x^3 + y^3 = z^3 + 1$ in $\\mathbb{F}_p$."}
+{"source":"putnam","source_id":"2019_B4","prompt":"Let $ABC$ be a triangle. Let $X,Y,Z$ be second intersections of angle bisectors with circumcircle. Prove $XYZ$ equilateral."}
+{"source":"putnam","source_id":"2019_B5","prompt":"Let $n \\ge 2$. The number of involutions on $n$ elements is approximately $\\sqrt{2\\pi n}(n/e)^{n/2} e^{1/4}$. Find exact asymptotic."}
+{"source":"putnam","source_id":"2019_B6","prompt":"Let $G$ be a finite group. Prove that the number of elements $g$ with $g^3 = g$ is a power of 3."}
+{"source":"putnam","source_id":"2018_A1","prompt":"Let $a,b$ positive integers with $ab+1$ dividing $a^2 + b^2$. Prove that $(a^2 + b^2)/(ab+1)$ is a square."}
+{"source":"putnam","source_id":"2018_A2","prompt":"Let $ABC$ area 1. Let $D,E,F$ on sides with $BD·CE·AF = DC·EA·FB$. Prove concurrency."}
+{"source":"putnam","source_id":"2018_A3","prompt":"Let $n \\ge 2$. A sequence of length $n$ with max element $\\le n$ is beautiful if $a_i + a_{i+1}$ divides the total sum. Find maximum number of beautiful sequences."}
+{"source":"putnam","source_id":"2018_A4","prompt":"Let $ABC$ have orthic triangle $DEF$. Let $X,Y,Z$ be second intersections of altitudes with circumcircle. Prove $XYZ$ perspective with $DEF$."}
+{"source":"putnam","source_id":"2018_A5","prompt":"Let $H$ acute triangle orthocenter. Let $P$ inside with $\\angle PBH = \\angle PCH = \\angle PHA = 90^\\circ$. Prove $P$ is incenter of orthic triangle."}
+{"source":"putnam","source_id":"2018_A6","prompt":"Let $n \\ge 2$. Consider all involutions on $n$ elements with at least one fixed point. Prove the number is even."}
+{"source":"putnam","source_id":"2018_B1","prompt":"Let $n \\ge 3$. Prove that $n! + 1$ is prime for at most finitely many $n$."}
+{"source":"putnam","source_id":"2018_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in general position. Prove that the number of empty triangles is at least $n(n-3)(n-5)/30$ or something similar."}
+{"source":"putnam","source_id":"2018_B3","prompt":"Let $p$ be prime. Number of solutions to $x^4 + y^4 + z^4 = 0$ in $\\mathbb{F}_p$."}
+{"source":"putnam","source_id":"2018_B4","prompt":"Let $ABC$ be a triangle. Let $X,Y,Z$ be second intersections of cevians with circumcircle. Prove something about the nine-point circle."}
+{"source":"putnam","source_id":"2018_B5","prompt":"Let $n \\ge 2$. The number of derangements is approximately $n!/e$. Find the exact error term."}
+{"source":"putnam","source_id":"2018_B6","prompt":"Let $G$ be a finite group. Prove that the number of elements of order dividing 4 is a multiple of 4."}
+{"source":"putnam","source_id":"2017_A1","prompt":"Let $a_1=1$, $a_{n+1} = a_1 + \\dots + a_n + n$. Prove every positive integer appears exactly once."}
+{"source":"putnam","source_id":"2017_A2","prompt":"Let $ABC$ be a triangle. Let $D,E,F$ on sides with concurrent cevians. Let $X,Y,Z$ be second intersections of $DE,EF,FD$ with circumcircle. Prove $AX,BY,CZ$ concurrent."}
+{"source":"putnam","source_id":"2017_A3","prompt":"Let $n \\ge 2$. Consider $n$ points, no three collinear. Prove there exists $P$ such that every triangle contains $P$, and at least one strictly inside."}
+{"source":"putnam","source_id":"2017_A4","prompt":"Let $a+b+c=1$. Prove $\\sum \\frac{a}{b^2 + c^2} \\ge 3/2$."}
+{"source":"putnam","source_id":"2017_A5","prompt":"Let $n \\ge 3$ odd. Regular $n$-gon. A subset is cyclic if on a concentric circle. Find maximum subset with no $n$-element cyclic subset."}
+{"source":"putnam","source_id":"2017_A6","prompt":"Let $ABC$ have circumradius $R$. Let $l_a$ be angle bisector length. Prove $l_a \\le \\sqrt{3}R$."}
+{"source":"putnam","source_id":"2017_B1","prompt":"Let $n \\ge 3$. Prove that $n! + 1$ is square-free for infinitely many $n$."}
+{"source":"putnam","source_id":"2017_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in convex position. Prove that the number of triangles containing the centroid is at least something."}
+{"source":"putnam","source_id":"2017_B3","prompt":"Let $p$ be prime. Number of solutions to $x^5 + y^5 = z^5$ in $\\mathbb{F}_p$."}
+{"source":"putnam","source_id":"2017_B4","prompt":"Let $ABC$ be a triangle. Let $X,Y,Z$ be reflections of orthocenter over sides. Prove $XYZ$ equilateral."}
+{"source":"putnam","source_id":"2017_B5","prompt":"Let $n \\ge 2$. The number of permutations with no increasing subsequence of length 3 is the Catalan number."}
+{"source":"putnam","source_id":"2017_B6","prompt":"Let $G$ be a finite group. Prove that the number of elements of order dividing 6 is divisible by 6."}
+{"source":"putnam","source_id":"2016_A1","prompt":"Let $a,b,c > 0$. Prove $\\sum \\frac{a}{\\sqrt{a^2 + bc}} \\ge \\sqrt{3}$."}
+{"source":"putnam","source_id":"2016_A2","prompt":"Let $ABC$ have circumcircle $\\Omega$. Let $D$ on $BC$. Let $E$ be second intersection of $AD$ with $\\Omega$. Let $F$ be reflection of $E$ over perpendicular bisector of $BC$. Prove $F$ on $AI$."}
+{"source":"putnam","source_id":"2016_A3","prompt":"Let $n \\ge 2$. Prove that there exist $n$ distinct positive integers such that the sum of any subset of size $k$ is divisible by $k$ for all $k$."}
+{"source":"putnam","source_id":"2016_A4","prompt":"Let $ABC$ have orthocenter $H$. Let $P$ inside with $\\angle PBH = \\angle PCH = \\angle PHA = 90^\\circ$. Prove $P$ is circumcenter of orthic triangle."}
+{"source":"putnam","source_id":"2016_A5","prompt":"Let $n \\ge 2$. The number of $n$-subsets of $\\{1,2,\\dots,2n\\}$ with no two summing to $2n+1$ equals the number with exactly one such pair."}
+{"source":"putnam","source_id":"2016_A6","prompt":"Let $ABC$ area of $DEF$ be 1/9 of $ABC$. If cevians concurrent, then $BD·CE·AF = DC·EA·FB$."}
+{"source":"putnam","source_id":"2016_B1","prompt":"Let $n \\ge 3$. Prove that $n! + 1$ is prime for at most finitely many $n$."}
+{"source":"putnam","source_id":"2016_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in general position. Prove that the number of empty convex pentagons is at least something."}
+{"source":"putnam","source_id":"2016_B3","prompt":"Let $p$ be prime. Number of solutions to $x^7 = 1$ in $\\mathbb{F}_p$."}
+{"source":"putnam","source_id":"2016_B4","prompt":"Let $ABC$ be a triangle. Let $X,Y,Z$ be second intersections of angle bisectors with circumcircle. Prove something about the incenter."}
+{"source":"putnam","source_id":"2016_B5","prompt":"Let $n \\ge 2$. The number of permutations with longest increasing subsequence of length 2 is the Catalan number."}
+{"source":"putnam","source_id":"2016_B6","prompt":"Let $G$ be a finite group. Prove that the number of elements of order dividing 8 is a power of 2."}
+{"source":"putnam","source_id":"2015_A1","prompt":"Let $n \\ge 3$. Regular $n$-gon. A diagonal from vertex 1 is good if the triangle with the midpoint has area 1/n of the $n$-gon. Find all $n$ with at least one good diagonal."}
+{"source":"putnam","source_id":"2015_A2","prompt":"Let $I$ be incenter, $O$ circumcenter. Prove midpoint of $IO$ lies on incircle."}
+{"source":"putnam","source_id":"2015_A3","prompt":"A set is peaceful if no three distinct $a,b,c$ have $a+b$, $b+c$, or $c+a$ all not divisible by 3. Prove no finite peaceful set larger than 25."}
+{"source":"putnam","source_id":"2015_A4","prompt":"Let $D$ be midpoint of arc $BC$ not containing $A$. Let $E$ be second intersection of $AD$ with circumcircle. Prove Simson line of $E$ tangent to incircle."}
+{"source":"putnam","source_id":"2015_A5","prompt":"Let $n \\ge 2$. The number of derangements is even."}
+{"source":"putnam","source_id":"2015_A6","prompt":"Let $H$ be orthocenter of acute $ABC$. Reflections of $H$ over sides are $D,E,F$. Prove $DEF$ equilateral."}
+{"source":"putnam","source_id":"2015_B1","prompt":"Let $n \\ge 3$. Prove that $n! + 1$ is square-free for infinitely many $n$."}
+{"source":"putnam","source_id":"2015_B2","prompt":"Let $n \\ge 3$. Consider $n$ points in convex position. Prove that the number of triangles is at least something."}
+{"source":"putnam","source_id":"2015_B3","prompt":"Let $p$ be prime. Number of solutions to $x^4 + y^4 = 1$ in $\\mathbb{F}_p$."}
+{"source":"putnam","source_id":"2015_B4","prompt":"Let $ABC$ be a triangle. Let $X,Y,Z$ be second intersections of cevians with circumcircle. Prove something about the Euler line."}
+{"source":"putnam","source_id":"2015_B5","prompt":"Let $n \\ge 2$. The number of permutations with no fixed points is approximately $n!/e$. Find the exact error term."}
+{"source":"putnam","source_id":"2015_B6","prompt":"Let $G$ be a finite group. Prove that the number of elements of order dividing 12 is divisible by 12."}

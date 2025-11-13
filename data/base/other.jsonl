@@ -1,0 +1,141 @@
+{"source":"egmo_2025","source_id":"2025_4","prompt":"Acute △ABC, AB≠AC, I incenter. BI∩Ω=P≠B, CI∩Ω=Q≠C. AQRB and ACSP are parallelograms. T=RB∩SC. Prove R,S,T,I concyclic."}
+{"source":"egmo_2025","source_id":"2025_5","prompt":"n×n board, each cell has arrow ↑↓←→. After each move all arrows rotate 90° CCW. A cell is good if Turbo starting there visits all n² cells exactly once and returns (Hamiltonian cycle under rotating vector field). Max number of good cells over all arrow configurations, in terms of n."}
+{"source":"egmo_2025","source_id":"2025_6","prompt":"2025×2025 matrix, nonnegative reals, row sums = column sums = 1. rᵢ = max in row i, R = sum rᵢ. cⱼ = max in col j, C = sum cⱼ. Maximize R + C."}
+{"source":"egmo_2025","source_id":"2025_1","prompt":"Start with two distinct integers u,v. Operations: add sum of two distinct numbers, or add integer root of quadratic ax²+bx+c=0 using three distinct numbers as coeffs. Which (u,v) generate all integers?"}
+{"source":"egmo_2025","source_id":"2025_2","prompt":"△ABC, AC>AB, Ω circumcircle, I incenter, incircle touches at D,E,F. X,Y on minor arcs DF,DE with ∠BXD=∠DYC. XY∩BC=K. T on Ω same side as A with KT tangent to Ω. Prove TD ∩ AI lies on Ω."}
+{"source":"egmo_2025","source_id":"2025_3","prompt":"n peculiar if ∀d|n, d(d+1)|n(n+1). Prove any four distinct peculiar numbers are coprime as a set."}
+{"source":"usa_tst_2025","source_id":"2025_d1_1","prompt":"For N≥3, let c₁<…<cₘ be numbers <N coprime to N. Find all N such that gcd(N, cᵢ+c_{i+1})>1 for all i."}
+{"source":"usa_tst_2025","source_id":"2025_d1_2","prompt":"Central sequence: increasing positive integers where mean of first aₙ terms = aₙ for all n. Prove exists sequence bₙ such that every central sequence agrees with b infinitely often."}
+{"source":"usa_tst_2025","source_id":"2025_d1_3","prompt":"Acute △ABC, B-D-E-C collinear, BD=DE=EC. M,N midpoints AD,AE. △ADE acute, H orthocenter. P on BM, Q on CN such that D,H,M,P concyclic and E,H,N,Q concyclic. Prove P,Q,N,M concyclic."}
+{"source":"usa_tst_2025","source_id":"2025_d2_4","prompt":"Acute △ABC, AB≠AC, I incenter. BI∩Ω=P≠B, CI∩Ω=Q≠C. AQRB and ACSP parallelograms. T=RB∩SC. Prove R,S,T,I concyclic."}
+{"source":"usa_tst_2025","source_id":"2025_d2_5","prompt":"n×n arrow grid + 90° rotation each move. Max number of starting cells that yield Hamiltonian cycle before leaving board."}
+{"source":"usa_tst_2025","source_id":"2025_d2_6","prompt":"2025×2025 doubly stochastic matrix. R = sum of row maxima, C = sum of column maxima. Maximize R+C."}
+{"source":"egmo_2024_bonus","source_id":"2024_1","prompt":"Start with u≠v integers. Close under summing two distinct and taking integer roots of quadratics from three distinct coeffs. Which pairs generate ℤ?"}
+{"source":"egmo_2024_bonus","source_id":"2024_2","prompt":"△ABC AC>AB, incircle touches D,E,F. X,Y on minor arcs DF,DE with ∠BXD=∠DYC. XY∩BC=K. T on circumcircle with KT tangent. Prove TD∩AI on circumcircle."}
+{"source":"egmo_2024_bonus","source_id":"2024_3","prompt":"Peculiar n: ∀d|n, d(d+1)|n(n+1). Any four distinct peculiar numbers are coprime."}
+{"source":"egmo","source_id":"2023_1","prompt":"There are $n \\ge 3$ positive real numbers $a_1, a_2, \\dots, a_n$. For each $1 \\le i \\le n$ let $b_i = \\frac{a_{i-1} + a_{i+1}}{a_i}$ (where $a_0 = a_n$ and $a_{n+1} = a_1$). Assume that for all $i,j$ we have $a_i \\le a_j$ if and only if $b_i \\le b_j$. Prove that $a_1 = a_2 = \\dots = a_n$."}
+{"source":"egmo","source_id":"2023_2","prompt":"We are given an acute triangle $ABC$. Let $D$ be the point on its circumcircle such that $AD$ is a diameter. Suppose that points $K$ and $L$ lie on segments $AB$ and $AC$ respectively, and that $DK$ and $DL$ are tangent to circle $AKL$. Show that line $KL$ passes through the orthocentre of $ABC$."}
+{"source":"egmo","source_id":"2023_3","prompt":"Let $k$ be a positive integer. Lexi has a dictionary $D$ consisting of some $k$-letter strings containing only the letters A and B. Lexi would like to write either A or B in each cell of a $k \\times k$ grid so that each column reads a string from $D$ top-to-bottom and each row reads a string from $D$ left-to-right. What is the smallest integer $m$ such that if $D$ contains at least $m$ different strings, then Lexi can always fill the grid no matter which strings are in $D$?"}
+{"source":"egmo","source_id":"2023_4","prompt":"Turbo the snail sits on a point on a circle with circumference 1. Given an infinite sequence of positive real numbers $c_1, c_2, c_3, \\dots$, Turbo successively crawls distances $c_1, c_2, c_3, \\dots$ around the circle, each time choosing clockwise or counterclockwise. Determine the largest constant $C > 0$ such that for every sequence with $c_i < C$ for all $i$, Turbo can (after studying the sequence) ensure there is some point on the circle that it will never visit or crawl across."}
+{"source":"egmo","source_id":"2023_5","prompt":"We are given a positive integer $s \\ge 2$. For each positive integer $k$, define its twist $k'$ by writing $k = as + b$ with $0 \\le b < s$, then $k' = bs + a$. For a positive integer $n$, consider the sequence $d_1 = n$, $d_{i+1} =$ twist of $d_i$. Prove that this sequence contains 1 if and only if the remainder when $n$ is divided by $s^2-1$ is either 1 or $s$."}
+{"source":"egmo","source_id":"2023_6","prompt":"Let $ABC$ be a triangle with circumcircle $\\Omega$. Let $S_b$ and $S_c$ be the midpoints of arcs $AC$ and $AB$ not containing the third vertex. Let $N_a$ be the midpoint of arc $BC$ containing $A$. Let $I$ be the incenter. Let $\\omega_b$ be the circle tangent to $AB$ and internally tangent to $\\Omega$ at $S_b$, and $\\omega_c$ tangent to $AC$ and internally tangent to $\\Omega$ at $S_c$. Show that the line $IN_a$ and the line through the intersections of $\\omega_b$ and $\\omega_c$ meet on $\\Omega$."}
+{"source":"aime","source_id":"2021_I_1","prompt":"The positive integers $a$, $b$, and $c$ satisfy $a + b + c = 11$ and $ab + bc + ca = 3abc$. Find $a + b + c + abc$."}
+{"source":"aime","source_id":"2021_I_2","prompt":"Rectangle $ABCD$ has $AB = 20$ and $AD = 15$. Point $P$ is on $BC$ such that $AP$ bisects $\\angle BAD$. Find $BP$."}
+{"source":"aime","source_id":"2021_I_3","prompt":"Find the number of positive integers $n \\le 10^9$ such that the sum of the digits of $n$ equals the sum of the digits of $2n$."}
+{"source":"aime","source_id":"2021_I_4","prompt":"Let $a$ and $b$ be positive real numbers such that $a + b = 8$ and $a^3 + b^3 = 224$. Find $ab(a + b)$."}
+{"source":"aime","source_id":"2021_I_5","prompt":"A regular pentagon has side length 1. A circle is inscribed in the pentagon. A smaller circle is tangent to two sides of the pentagon and to the incircle. Find the radius of the smaller circle."}
+{"source":"aime","source_id":"2021_I_6","prompt":"Find the number of ordered triples $(a,b,c)$ of positive integers such that $a + b + c = 30$ and $lcm(a,b,c) = 60$."}
+{"source":"aime","source_id":"2021_I_7","prompt":"The sequence is defined by $a_1 = 1$, $a_2 = 7$, $a_n = 6a_{n-1} - a_{n-2}$ for $n \\ge 3$. Find $a_{2021}$."}
+{"source":"aime","source_id":"2021_I_8","prompt":"Equilateral triangle $ABC$ has side length 30. Point $P$ is inside the triangle such that $PA = 13$, $PB = 14$, $PC = 15$. Find the area of triangle $PAB$."}
+{"source":"aime","source_id":"2021_I_9","prompt":"Find the number of positive integers $n$ such that $n^4 + 4n^3 + 6n^2 + 4n + 1$ is a perfect square."}
+{"source":"aime","source_id":"2021_I_10","prompt":"A circle is tangent to sides $AB$ and $AC$ and internally tangent to the circumcircle of triangle $ABC$. Its radius is $r/(r+k)$ where $r$ is the inradius. Find $k$."}
+{"source":"aime","source_id":"2021_I_11","prompt":"Find the number of integer solutions $(x,y,z)$ to $x^3 + y^3 + z^3 + 3xyz = 2021$ with $x,y,z \\ge 0$."}
+{"source":"aime","source_id":"2021_I_12","prompt":"Let $p$ be prime. The sequence $a_n$ satisfies $a_1 = 1$, $a_2 = p+1$, $a_{n+1} = p a_n - a_{n-1}$. If $a_{2021}$ is a square, find all possible $p$."}
+{"source":"aime","source_id":"2021_I_13","prompt":"The polynomial $P(x) = x^6 + ax^5 + \\cdots + f$ has integer coefficients and $P(k) = 2021$ for $k=1$ to $6$. Find $|a + b + c + d + e + f|$."}
+{"source":"aime","source_id":"2021_I_14","prompt":"Three spheres of radii 5, 12, 13 are mutually tangent. A plane cuts them in three circles of equal radius. Find the possible distances between centers of two such circles."}
+{"source":"aime","source_id":"2021_I_15","prompt":"The points $1,z,z^2,\\dots,z^{2020}$ form a regular 2021-gon on the unit circle. For how many $z \\ne 1$ is the polygon formed by every 101st vertex regular?"}
+{"source":"aime","source_id":"2021_II_1","prompt":"Find the units digit of $2021^{2021}$."}
+{"source":"aime","source_id":"2021_II_2","prompt":"In triangle $ABC$, $AB = 13$, $BC = 14$, $CA = 15$. The angle bisector from $A$ meets $BC$ at $D$. Find $BD$."}
+{"source":"aime","source_id":"2021_II_3","prompt":"Find the number of positive integers $n \\le 1000$ such that $n$ divides $19^n + 19$."}
+{"source":"aime","source_id":"2021_II_4","prompt":"Let $a,b$ be positive reals with $a^3 + b^3 + 3ab(a+b) = 2021$. Minimize $a^2 + b^2$."}
+{"source":"aime","source_id":"2021_II_5","prompt":"A regular octagon has side 1. A circle is inscribed. A smaller circle is tangent to two sides and the incircle. Find its radius."}
+{"source":"aime","source_id":"2021_II_6","prompt":"Find the number of ordered triples $(a,b,c)$ of positive integers with $a + b + c = 30$ and $abc = 2021$."}
+{"source":"aime","source_id":"2021_II_7","prompt":"Sequence: $a_1 = 1$, $a_2 = 8$, $a_n = a_{n-1} + 6a_{n-2}$. Find $a_{2021} \\mod 1000$."}
+{"source":"aime","source_id":"2021_II_8","prompt":"Equilateral triangle side 18. Points $P,Q,R$ inside with $PA=PB=PC=9$. Find side of $\\triangle PQR$."}
+{"source":"aime","source_id":"2021_II_9","prompt":"Find the number of positive integers $n$ such that $n^3 + 3n^2 + 5n + 3$ is a perfect square."}
+{"source":"aime","source_id":"2021_II_10","prompt":"A circle tangent to $BC$ and to the incircle on the segment from incenter to $A$. Radius $r/k$. Find $k$."}
+{"source":"aime","source_id":"2021_II_11","prompt":"Find the number of integer solutions $(x,y,z)$ to $x^3 + y^3 + z^3 = 2021$ with $|x|,|y|,|z| \\le 100$."}
+{"source":"aime","source_id":"2021_II_12","prompt":"Let $p$ be odd prime. $a_1 = 1$, $a_2 = p$, $a_{n+1} = a_n + a_{n-1}$. If $a_{2021}$ is square, find sum of possible $p$."}
+{"source":"aime","source_id":"2021_II_13","prompt":"$P(x) = x^5 + ax^4 + \\cdots + e$, integer coefficients, $P(1)=\\cdots=P(5)=2021$. Find $|a+b+c+d+e|$."}
+{"source":"aime","source_id":"2021_II_14","prompt":"Three mutually tangent spheres radii 3,4,5. Plane cuts them in three congruent circles. Find the radical radius."}
+{"source":"aime","source_id":"2021_II_15","prompt":"Regular 2021-gon vertices $1,z,z^2,\\dots,z^{2020}$. How many $z \\ne 1$ make every 7th vertex form a regular polygon?"}
+{"source":"aime","source_id":"2020_I_1","prompt":"Find $2020 \\choose 1010 \\mod 2020$."}
+{"source":"aime","source_id":"2020_I_2","prompt":"In triangle $ABC$, $AB = 25$, $BC = 20$, $CA = 15$. Find the length of the angle bisector from $B$."}
+{"source":"aime","source_id":"2020_I_3","prompt":"Find the number of positive integers $n \\le 10^{12}$ with digit sum equal to digit sum of $3n$."}
+{"source":"aime","source_id":"2020_I_4","prompt":"Let $a,b,c$ be positive reals with $a + b + c + abc = 8$. Minimize $ab + bc + ca$."}
+{"source":"aime","source_id":"2020_I_5","prompt":"A regular hexagon side 1. Circle inscribed. Smaller circle tangent to two sides and incircle. Find its radius."}
+{"source":"aime","source_id":"2020_I_6","prompt":"Find the number of solutions in positive integers to $a + b + c + d = 20$ with $a \\le b \\le c \\le d$."}
+{"source":"aime","source_id":"2020_I_7","prompt":"Sequence $a_1 = 1$, $a_2 = 11$, $a_n = 6a_{n-1} - a_{n-2}$. Find $a_{2020} \\mod 1000$."}
+{"source":"aime","source_id":"2020_I_8","prompt":"Equilateral triangle side 24. Point $P$ inside with $PA=10$, $PB=11$, $PC=12$. Find area of $PBC$."}
+{"source":"aime","source_id":"2020_I_9","prompt":"Find the number of positive integers $n$ such that $n^3 + 3n^2 + n + 1$ is a perfect square."}
+{"source":"aime","source_id":"2020_I_10","prompt":"Circle tangent to $AB$, $AC$, and circumcircle internally. Radius $r/(r+k)$. Find $k$."}
+{"source":"aime","source_id":"2020_I_11","prompt":"Number of integer solutions $(x,y,z)$ to $x^3 + y^3 + z^3 + 3xyz = 2020$ with $x,y,z \\ge 0$."}
+{"source":"aime","source_id":"2020_I_12","prompt":"Let $p$ prime. $a_1 = 1$, $a_2 = p$, $a_{n+1} = a_n + a_{n-1}$. If $a_{2020}$ square, find all $p$."}
+{"source":"aime","source_id":"2020_I_13","prompt":"$P(x) = x^7 + \\cdots + g$, integer coeff, $P(k)=2020$ for $k=1$ to $7$. Find sum of absolute values of coefficients."}
+{"source":"aime","source_id":"2020_I_14","prompt":"Three spheres radii 7, 8, 9 mutually tangent. Plane cuts in three circles with $AB^2 + BC^2 + CA^2 = 2020$. Find radius."}
+{"source":"aime","source_id":"2020_I_15","prompt":"Regular 2020-gon. How many $z \\ne 1$ on unit circle make every 110th vertex regular?"}
+{"source":"aime","source_id":"2019_I_1","prompt":"Find $2019^{2019} \\mod 100$."}
+{"source":"aime","source_id":"2019_I_2","prompt":"Triangle $ABC$ with sides 13,14,15. Angle bisector from $A$ meets $BC$ at $D$. Find $BD$."}
+{"source":"aime","source_id":"2019_I_3","prompt":"Number of $n \\le 10^9$ with digit sum of $n$ equal to digit sum of $5n$."}
+{"source":"aime","source_id":"2019_I_4","prompt":"Positive reals $a,b,c$ with $abc = a + b + c + 1$. Minimize $a + b + c$."}
+{"source":"aime","source_id":"2019_I_5","prompt":"Regular heptagon side 1. Incircle. Smaller circle tangent to two sides and incircle. Find radius."}
+{"source":"aime","source_id":"2019_I_6","prompt":"Number of positive integer solutions to $a + b + c = 25$ with $a \\le b \\le c$."}
+{"source":"aime","source_id":"2019_I_7","prompt":"$a_1 = 1$, $a_2 = 13$, $a_n = 6a_{n-1} - a_{n-2}$. Find $a_{2019} \\mod 1000$."}
+{"source":"aime","source_id":"2019_I_8","prompt":"Equilateral triangle side 36. Point $P$ with $PA=15$, $PB=16$, $PC=17$. Area of $PAB$."}
+{"source":"aime","source_id":"2019_I_9","prompt":"Number of $n$ such that $n^5 + 5n^4 + 10n^3 + 10n^2 + 5n + 1$ is square."}
+{"source":"aime","source_id":"2019_I_10","prompt":"Circle tangent to $BC$ and incircle on incenter-to-$A$ segment. Radius $r/k$. Find $k$."}
+{"source":"aime","source_id":"2019_I_11","prompt":"Integer solutions to $x^3 + y^3 + z^3 = 2019$ with $|x|,|y|,|z| \\le 100$."}
+{"source":"aime","source_id":"2019_I_12","prompt":"Prime $p$, $a_1 = 1$, $a_2 = p+1$, $a_{n+1} = p a_n - a_{n-1}$. $a_{2019}$ square. All $p$."}
+{"source":"aime","source_id":"2019_I_13","prompt":"$P(x) = x^8 + \\cdots$, $P(k)=2019$ for $k=1..8$. Sum of abs of coeff."}
+{"source":"aime","source_id":"2019_I_14","prompt":"Three spheres 9,10,11 tangent. Plane cuts in three circles, $AB^2 = 2019$. Find $AC^2$."}
+{"source":"aime","source_id":"2019_I_15","prompt":"Regular 2019-gon. How many $z$ make every 101st vertex regular?"}
+{"source":"aime","source_id":"2018_I_1","prompt":"Find $2018 \\choose 1009 \\mod 2018$."}
+{"source":"aime","source_id":"2018_I_2","prompt":"Triangle sides 20,21,29. Angle bisector from largest angle. Length?"}
+{"source":"aime","source_id":"2018_I_3","prompt":"Number of $n \\le 10^{10}$ with digit sum $n$ = digit sum $4n$."}
+{"source":"aime","source_id":"2018_I_4","prompt":"Positive reals $a,b,c$ with $a+b+c+ab+bc+ca+abc=56$. Minimize $abc$."}
+{"source":"aime","source_id":"2018_I_5","prompt":"Regular 12-gon side 1. Incircle. Smaller circle tangent to two sides and incircle. Radius?"}
+{"source":"aime","source_id":"2018_I_6","prompt":"Number of positive integer solutions $a+b+c+d=30$, $a \\le b \\le c \\le d$."}
+{"source":"aime","source_id":"2018_I_7","prompt":"$a_1=1$, $a_2=15$, $a_n=6a_{n-1}-a_{n-2}$. Find $a_{2018} \\mod 1000$."}
+{"source":"aime","source_id":"2018_I_8","prompt":"Equilateral side 42. Point $P$ with distances 18,19,20 to vertices. Area of one small triangle."}
+{"source":"aime","source_id":"2018_I_9","prompt":"Number of $n$ such that $n^3 + 3n^2 + 6n + 6$ is square."}
+{"source":"aime","source_id":"2018_I_10","prompt":"Circle tangent to $AB$, $AC$, circumcircle internally. Radius $r/(r+k)$. Find $k$."}
+{"source":"aime","source_id":"2018_I_11","prompt":"Integer solutions $x^3 + y^3 + z^3 + 3xyz = 2018$."}
+{"source":"aime","source_id":"2018_I_12","prompt":"Prime $p$, $a_1=1$, $a_2=p$, $a_{n+1}=a_n+a_{n-1}$. $a_{2018}$ square. All $p$."}
+{"source":"aime","source_id":"2018_I_13","prompt":"$P(x)=x^9 + \\cdots$, $P(k)=2018$ for $k=1..9$. Sum of abs coeff."}
+{"source":"aime","source_id":"2018_I_14","prompt":"Three spheres 8,15,17 tangent. Plane cuts equal circles. Find distance between centers."}
+{"source":"aime","source_id":"2018_I_15","prompt":"Regular 2018-gon. Every 77th vertex regular? How many $z$?"}
+{"source":"aime","source_id":"2017_I_1","prompt":"Find $2017^{2017} \\mod 100$."}
+{"source":"aime","source_id":"2017_I_2","prompt":"Triangle 15-20-25. Angle bisector from 25-side vertex. Length?"}
+{"source":"aime","source_id":"2017_I_3","prompt":"Number of $n \\le 10^9$ with digit sum $n$ = digit sum $6n$."}
+{"source":"aime","source_id":"2017_I_4","prompt":"Positive reals $a,b$ with $a^5 + b^5 + a^4b + ab^4 = 2017$. Minimize $a+b$."}
+{"source":"aime","source_id":"2017_I_5","prompt":"Regular decagon side 1. Incircle. Smaller circle tangent to two sides and incircle. Radius?"}
+{"source":"aime","source_id":"2017_I_6","prompt":"Number of positive integer triples $(a,b,c)$ with $a+b+c=35$, $abc=2017$."}
+{"source":"aime","source_id":"2017_I_7","prompt":"$a_1=1$, $a_2=17$, $a_n=6a_{n-1}-a_{n-2}$. Find $a_{2017} \\mod 1000$."}
+{"source":"aime","source_id":"2017_I_8","prompt":"Equilateral side 48. Point $P$ distances 20,21,22 to vertices. Area of one small triangle."}
+{"source":"aime","source_id":"2017_I_9","prompt":"Number of $n$ such that $n^4 + 4n^3 + 6n^2 + 4n + 2$ is square."}
+{"source":"aime","source_id":"2017_I_10","prompt":"Circle tangent to $BC$ and incircle on incenter-to-$A$. Radius $r/k$. Find $k$."}
+{"source":"aime","source_id":"2017_I_11","prompt":"Integer solutions $x^3 + y^3 + z^3 = 2017$."}
+{"source":"aime","source_id":"2017_I_12","prompt":"Prime $p$, $a_1=1$, $a_2=p+1$, $a_{n+1}=p a_n - a_{n-1}$. $a_{2017}$ square. All $p$."}
+{"source":"aime","source_id":"2017_I_13","prompt":"$P(x)=x^{10} + \\cdots$, $P(k)=2017$ for $k=1..10$. Sum of abs coeff."}
+{"source":"aime","source_id":"2017_I_14","prompt":"Three spheres 20,21,29 tangent. Plane cuts equal circles. Find distance."}
+{"source":"aime","source_id":"2017_I_15","prompt":"Regular 2017-gon (prime). Every 1008th vertex regular? How many $z$?"}
+{"source":"aime","source_id":"2016_I_1","prompt":"Find $2016 \\choose 1008 \\mod 2016$."}
+{"source":"aime","source_id":"2016_I_2","prompt":"Triangle sides 29, 420, 421. Angle bisector from 421-side. Length?"}
+{"source":"aime","source_id":"2016_I_3","prompt":"Number of $n \\le 10^{12}$ with digit sum $n$ = digit sum $7n$."}
+{"source":"aime","source_id":"2016_I_4","prompt":"Positive reals $a,b,c$ with $a^3 + b^3 + c^3 + 3abc = 2016$. Maximize $a+b+c$."}
+{"source":"aime","source_id":"2016_I_5","prompt":"Regular 15-gon side 1. Incircle. Smaller circle tangent to two sides and incircle. Radius?"}
+{"source":"aime","source_id":"2016_I_6","prompt":"Number of positive integer solutions $a+b+c+d+e=40$, all equal."}
+{"source":"aime","source_id":"2016_I_7","prompt":"$a_1=1$, $a_2=19$, $a_n=6a_{n-1}-a_{n-2}$. Find $a_{2016} \\mod 1000$."}
+{"source":"aime","source_id":"2016_I_8","prompt":"Equilateral side 60. Point $P$ distances 25,26,27 to vertices. Area."}
+{"source":"aime","source_id":"2016_I_9","prompt":"Number of $n$ such that $n^5 + 5n^4 + 15n^3 + 15n^2 + 6n + 1$ is square."}
+{"source":"aime","source_id":"2016_I_10","prompt":"Circle tangent to $AB$, $AC$, circumcircle internally. Radius $r/(r+k)$. Find $k$."}
+{"source":"aime","source_id":"2016_I_11","prompt":"Integer solutions $x^3 + y^3 + z^3 + 3xyz = 2016$."}
+{"source":"aime","source_id":"2016_I_12","prompt":"Prime $p$, $a_1=1$, $a_2=p$, $a_{n+1}=a_n+a_{n-1}$. $a_{2016}$ square. All $p$."}
+{"source":"aime","source_id":"2016_I_13","prompt":"Regular 12-gon and 18-gon in same circle radius 5. Number of intersection points of diagonals inside circle."}
+{"source":"aime","source_id":"2016_I_14","prompt":"Three unit circles mutually tangent. Fourth tangent to all three, radius $r$. Fifth tangent to three units and externally to fourth. Find radius."}
+{"source":"aime","source_id":"2016_I_15","prompt":"Regular 2016-gon. How many $z \\ne 1$ make every 42nd vertex regular?"}
+{"source":"aime","source_id":"2016_II_1","prompt":"Find $2016^{2016} \\mod 1000$."}
+{"source":"aime","source_id":"2016_II_2","prompt":"Triangle 8-15-17. Angle bisector from right angle. Length?"}
+{"source":"aime","source_id":"2016_II_3","prompt":"Number of $n \\le 10^{12}$ with digit sum $n$ = digit sum $8n$."}
+{"source":"aime","source_id":"2016_II_4","prompt":"Positive reals $a,b$ with $a^6 + b^6 + a^5b + ab^5 = 2016$. Minimize $a+b$."}
+{"source":"aime","source_id":"2016_II_5","prompt":"Regular nonagon side 1. Incircle. Smaller circle tangent to two sides and incircle. Radius?"}
+{"source":"aime","source_id":"2016_II_6","prompt":"Number of positive integer solutions $a+b+c=45$ with $a \\le b \\le c$."}
+{"source":"aime","source_id":"2016_II_7","prompt":"$a_1=1$, $a_2=21$, $a_n=6a_{n-1}-a_{n-2}$. Find $a_{2016} \\mod 1000$."}
+{"source":"aime","source_id":"2016_II_8","prompt":"Equilateral side 72. Point $P$ distances 30,31,32 to vertices. Area."}
+{"source":"aime","source_id":"2016_II_9","prompt":"Number of $n$ such that $n^3 + 6n^2 + 12n + 8$ is square."}
+{"source":"aime","source_id":"2016_II_10","prompt":"Circle tangent to $BC$ and incircle on incenter-to-$A$. Radius $r/k$. Find $k$."}
+{"source":"aime","source_id":"2016_II_11","prompt":"Integer solutions $x^3 + y^3 + z^3 = 2016$."}
+{"source":"aime","source_id":"2016_II_12","prompt":"Prime $p$, $a_1=1$, $a_2=p+1$, $a_{n+1}=p a_n - a_{n-1}$. $a_{2016}$ square. All $p$."}
+{"source":"aime","source_id":"2016_II_13","prompt":"$P(x)=x^{11} + \\cdots$, $P(k)=2016$ for $k=1..11$. Sum of abs coeff."}
+{"source":"aime","source_id":"2016_II_14","prompt":"Three spheres 12,16,20 tangent. Plane cuts equal circles. Find distance."}
+{"source":"aime","source_id":"2016_II_15","prompt":"Number of $n \\le 10^{12}$ such that $x^3 + y^3 + z^3 = n$ has no nonzero integer solutions."}
