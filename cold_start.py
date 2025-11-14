@@ -135,7 +135,7 @@ training_args = TrainingArguments(
     per_device_train_batch_size=2,
     gradient_accumulation_steps=8,  # Effective batch size = 2 * 8 = 16 (matches paper)
     learning_rate=2e-5,  # Paper: 2e-5 for cold-start
-    warmup_steps=50,
+    warmup_steps=10,
     logging_steps=10,
     save_steps=200,
     bf16=True,  # bf16 is better for A100 GPUs
