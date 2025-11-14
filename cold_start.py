@@ -39,9 +39,6 @@ from hf_config import HF_USERNAME, HF_VERSION, HF_TAGS, HF_REPO_ID, HF_P_BASE_PA
 # Load environment variables from .env file
 load_dotenv()
 
-# Initialize wandb
-wandb.init(project="PromptCoT-coldstart", name="H200_max_speed")
-
 # BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
 # Base models provide high entropy, diversity, and non-deterministic exploration needed for EM
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
@@ -213,6 +210,14 @@ def train_and_save(texts, path, repo_name, model_description):
     print(f"🚀 Training {model_description} with Unsloth on H200...")
     print(f"{'='*60}")
     
+    # Initialize wandb for this specific model
+    wandb.init(
+        project="PromptCoT-coldstart",
+        name=f"{repo_name}_model_H200",
+        reinit=True,
+        tags=[repo_name, "cold-start", "H200"]
+    )
+    
     # Load model with Unsloth (4-bit quantization + optimized LoRA)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_NAME,
@@ -269,7 +274,7 @@ def train_and_save(texts, path, repo_name, model_description):
     
     # Log to wandb
     wandb.log({
-        f"{repo_name}_structure_accuracy": structure_accuracy
+        "structure_accuracy": structure_accuracy
     })
     
     # Save model and tokenizer
@@ -290,6 +295,9 @@ def train_and_save(texts, path, repo_name, model_description):
     del model
     torch.cuda.empty_cache()
     print(f"✓ Completed training {model_description}\n")
+    
+    # Finish wandb run for this model
+    wandb.finish()
 
 # Cold-start training: MLE on seed ⟨c,z,x⟩ triplets
 print("\n" + "="*60)
@@ -324,8 +332,6 @@ print(f"✓ pθ model saved to: {OUTPUT_DIR_P}")
 print(f"✓ qϕ model saved to: {OUTPUT_DIR_Q}")
 print("\nModels are now ready for EM loop training.")
 print("="*60)
-
-wandb.finish()
 
 
     
