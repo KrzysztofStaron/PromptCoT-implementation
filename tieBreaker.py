@@ -18,6 +18,38 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL_NAME = "openai/gpt-oss-120b"
 REWARD_THRESHOLD = 0.5  # If max(rewards) - min(rewards) < this, use tiebreaker
 STD_THRESHOLD = 0.3  # Alternative: if std(rewards) < this, use tiebreaker
+TIEBREAKER_CHANCE = 0.015  # Default probability (deprecated, use get_tiebreaker_chance instead)
+
+def get_tiebreaker_chance(iteration: int) -> float:
+    """
+    Calculate tiebreaker chance based on iteration number.
+    Chance decreases linearly over iterations.
+    
+    Args:
+        iteration: 1-indexed iteration number
+    
+    Returns:
+        Probability (0.0 to 1.0) of using tiebreaker
+    """
+    # Exact values for first 6 iterations
+    if iteration == 1:
+        return 0.10  # 10%
+    elif iteration == 2:
+        return 0.02  # 2%
+    elif iteration == 3:
+        return 0.015  # 1.5%
+    elif iteration == 4:
+        return 0.01  # 1%
+    elif iteration == 5:
+        return 0.005  # 0.5%
+    elif iteration == 6:
+        return 0.0025  # 0.25%
+    else:
+        # After iteration 6, continue decreasing linearly
+        # From 0.0025 at iter 6, decrease by 0.0005 per iteration
+        # Minimum of 0.0001 (0.01%)
+        chance = 0.0025 - (iteration - 6) * 0.0005
+        return max(0.0001, chance)
 
 # PromptCoT 2.0 tiebreaker prompt — battle-tested production prompt
 # Used by top labs (Ant Group, HKU, DeepSeek-Math, Qwen-Math, LLaMA-3.1-405B-math)
@@ -225,7 +257,8 @@ def select_best_rationale(
     problem: str,
     rationales: List[str],
     rewards: List[float],
-    use_groq: bool = True
+    use_groq: bool = True,
+    iteration: Optional[int] = None
 ) -> Tuple[int, str]:
     """
     Select best rationale using reward, with optional Groq tiebreaker.
@@ -240,6 +273,7 @@ def select_best_rationale(
         rationales: List of rationale candidates
         rewards: List of reward values (must match rationales length)
         use_groq: Whether to use Groq tiebreaker when reward is ambiguous
+        iteration: Optional 1-indexed iteration number (for decreasing tiebreaker chance)
     
     Returns:
         Tuple of (best_index, best_rationale)
@@ -255,8 +289,9 @@ def select_best_rationale(
     
     # Check if reward signal is ambiguous
     if use_groq and use_tiebreaker(rewards, REWARD_THRESHOLD):
-        # Only use tiebreaker 1% of the time to avoid slowdown
-        if random.random() < 0.015:
+        # Calculate tiebreaker chance based on iteration (decreases linearly)
+        tiebreaker_chance = get_tiebreaker_chance(iteration) if iteration is not None else TIEBREAKER_CHANCE
+        if random.random() < tiebreaker_chance:
             log.info(f"[SELECT] Reward signal ambiguous (spread={max(rewards)-min(rewards):.3f}), using Groq tiebreaker")
             best_idx = break_tie_with_groq(concepts, problem, rationales, rewards)
             return best_idx, rationales[best_idx]

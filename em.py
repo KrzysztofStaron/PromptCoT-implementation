@@ -11,7 +11,7 @@
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
 import json
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
 from datasets import Dataset
 from peft import PeftModel
 import os
@@ -20,10 +20,10 @@ from huggingface_hub import HfApi, create_repo
 from dotenv import load_dotenv
 from tieBreaker import select_best_rationale
 import wandb
+from hf_config import HF_USERNAME, HF_VERSION, HF_REPO_ID, HF_P_BASE_PATH, HF_Q_BASE_PATH
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
-HF_USERNAME = "PanzerBread/promptcot-"
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -181,7 +181,7 @@ def compute_reward(pθ, c, x, z):
     try:
         # log pθ(x | z, c)
         input_x = tokenizer(
-            f"Concepts: {' | '.join(c)}\nRationale: {z}\nProblem: {x}", 
+            f"Concepts: {' | '.join(c)}\nRationale: {z}\nProblem: {x}",
             return_tensors="pt"
         ).to(pθ.device)
         loss_x = pθ(**input_x, labels=input_x["input_ids"]).loss
@@ -233,6 +233,60 @@ def batched_e_step(qφ, batch_c, batch_x):
     
     return z_candidates
 
+# === STRUCTURE CHECK ===
+def check_structure(text):
+    """Check if text contains all required fields"""
+    text_lower = text.lower()
+    has_concepts = "concepts:" in text_lower
+    has_problem = "problem:" in text_lower
+    has_rationale = "rationale:" in text_lower
+    return has_concepts and has_problem and has_rationale
+
+def compute_structure_accuracy(model, tokenizer, triples, model_type="prompt", sample_size=5):
+    """Compute structure accuracy for a model"""
+    model.eval()
+    structure_correct = 0
+    total_samples = 0
+    
+    with torch.no_grad():
+        for i in range(min(sample_size, len(triples))):
+            ex = triples[i]
+            # For pθ model: start with concepts only
+            if model_type == "prompt":
+                # pθ format: Concepts: ... -> Rationale: ... Problem: ...
+                concepts_str = ' | '.join(ex['concepts'])
+                prompt = f"Concepts: {concepts_str}\n"
+            else:
+                # qϕ format: Concepts: ... Problem: ... -> Rationale: ...
+                concepts_str = ' | '.join(ex['concepts'])
+                prompt = f"Concepts: {concepts_str}\nProblem: {ex['problem']}\n"
+            
+            # Tokenize prompt
+            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+            
+            # Generate
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=512,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+                pad_token_id=tokenizer.eos_token_id
+            )
+            
+            # Decode
+            generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            # Check structure - must have all three fields
+            if check_structure(generated_text):
+                structure_correct += 1
+            total_samples += 1
+    
+    # Calculate accuracy
+    structure_accuracy = structure_correct / total_samples if total_samples > 0 else 0.0
+    model.train()
+    return structure_accuracy
+
 # === M-STEP ===
 def m_step(model, triples, mode, em_iter_0_indexed):
     """
@@ -279,11 +333,14 @@ def m_step(model, triples, mode, em_iter_0_indexed):
     )
     train_result = trainer.train()
     
-    # Return loss instead of logging here - we'll log all M-step metrics together
-    final_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else train_result.metrics.get('train_loss', 0)
-    log.info(f"M-step for {mode} complete. Final loss: {final_loss:.4f}")
+    # Compute structure accuracy after training
+    structure_accuracy = compute_structure_accuracy(model, tokenizer, triples, model_type=mode, sample_size=5)
     
-    return final_loss
+    # Return loss and structure accuracy
+    final_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else train_result.metrics.get('train_loss', 0)
+    log.info(f"M-step for {mode} complete. Final loss: {final_loss:.4f}, Structure accuracy: {structure_accuracy:.2%}")
+    
+    return final_loss, structure_accuracy
 
 # === HF UPLOAD (2 REPOS) ===
 def upload_checkpoint(pθ, qφ, iter_num):
@@ -293,21 +350,24 @@ def upload_checkpoint(pθ, qφ, iter_num):
 
     api = HfApi(token=HF_TOKEN)
     
-    # pθ → promptcot-p
+    # Create repo if it doesn't exist
+    create_repo(HF_REPO_ID, token=HF_TOKEN, repo_type="model", exist_ok=True)
+    
+    # pθ → <HF_VERSION>/p/iter-<iter_num>/ and <HF_VERSION>/p/latest/
     pθ.save_pretrained(f"./temp_p_iter{iter_num}")
-    p_repo = f"{HF_USERNAME}p"
-    create_repo(p_repo, token=HF_TOKEN, repo_type="model", exist_ok=True)
-    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=p_repo, repo_type="model")
-    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo="latest", repo_id=p_repo, repo_type="model")
-    log.info(f"p iter-{iter_num} → {p_repo}/iter-{iter_num}")
+    p_iter_path = f"{HF_P_BASE_PATH}iter-{iter_num}/"
+    p_latest_path = f"{HF_P_BASE_PATH}latest/"
+    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo=p_iter_path, repo_id=HF_REPO_ID, repo_type="model")
+    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo=p_latest_path, repo_id=HF_REPO_ID, repo_type="model")
+    log.info(f"p iter-{iter_num} → {HF_REPO_ID}/{p_iter_path}")
 
-    # qφ → promptcot-q
+    # qφ → <HF_VERSION>/q/iter-<iter_num>/ and <HF_VERSION>/q/latest/
     qφ.save_pretrained(f"./temp_q_iter{iter_num}")
-    q_repo = f"{HF_USERNAME}q"
-    create_repo(q_repo, token=HF_TOKEN, repo_type="model", exist_ok=True)
-    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo=f"iter-{iter_num}", repo_id=q_repo, repo_type="model")
-    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo="latest", repo_id=q_repo, repo_type="model")
-    log.info(f"q iter-{iter_num} → {q_repo}/iter-{iter_num}")
+    q_iter_path = f"{HF_Q_BASE_PATH}iter-{iter_num}/"
+    q_latest_path = f"{HF_Q_BASE_PATH}latest/"
+    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo=q_iter_path, repo_id=HF_REPO_ID, repo_type="model")
+    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo=q_latest_path, repo_id=HF_REPO_ID, repo_type="model")
+    log.info(f"q iter-{iter_num} → {HF_REPO_ID}/{q_iter_path}")
 
 # === MAIN LOOP ===
 # Note: em_iter is 1-indexed (1, 2, 3, ...)
@@ -518,9 +578,9 @@ else:
         }, step=e_step_global_step)
         log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
         
-        # M-step - collect losses
-        prompt_loss = m_step(pθ, new_triples, "prompt", em_iter - 1)  # Convert to 0-indexed for m_step
-        rationale_loss = m_step(qφ, new_triples, "rationale", em_iter - 1)  # Convert to 0-indexed for m_step
+        # M-step - collect losses and structure accuracies
+        prompt_loss, prompt_structure_accuracy = m_step(pθ, new_triples, "prompt", em_iter - 1)  # Convert to 0-indexed for m_step
+        rationale_loss, rationale_structure_accuracy = m_step(qφ, new_triples, "rationale", em_iter - 1)  # Convert to 0-indexed for m_step
         
         # Log M-step to wandb
         m_step_global_step = e_step_global_step + 1
@@ -530,8 +590,11 @@ else:
             "m_step/rationale_loss": rationale_loss,
             "m_step/combined_loss": prompt_loss + rationale_loss,
             "m_step/num_triples": len(new_triples),
+            "m_step/prompt_structure_accuracy": prompt_structure_accuracy,
+            "m_step/rationale_structure_accuracy": rationale_structure_accuracy,
         }, step=m_step_global_step)
         log.info(f"[WANDB] Logged M-step at step {m_step_global_step}: prompt_loss={prompt_loss:.4f}, rationale_loss={rationale_loss:.4f}")
+        log.info(f"[WANDB] Structure accuracy - prompt: {prompt_structure_accuracy:.2%}, rationale: {rationale_structure_accuracy:.2%}")
         
         # Log overall iteration summary
         iter_summary_step = m_step_global_step + 1
