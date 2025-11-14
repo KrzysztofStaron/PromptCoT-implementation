@@ -55,7 +55,7 @@ SEED_FILE = "./data/annotated.jsonl"
 CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 10
 K_SAMPLES = 4
-BATCH_SIZE = 6  # Unsloth can handle 6 easily on H200
+BATCH_SIZE = 4  # Conservative for dual-model E-step (pθ + qφ both in VRAM)
 USE_GROQ_TIEBREAKER = True
 
 # Unsloth config (same as cold-start)
@@ -212,21 +212,27 @@ def compute_reward(pθ, c, x, z):
             f"Concepts: {' | '.join(c)}\nRationale: {z}\nProblem: {x}",
             return_tensors="pt"
         ).to(pθ.device)
-        loss_x = pθ(**input_x, labels=input_x["input_ids"]).loss
+        with torch.no_grad():
+            loss_x = pθ(**input_x, labels=input_x["input_ids"]).loss
 
         # log pθ(z | c)
         input_z = tokenizer(
             f"Concepts: {' | '.join(c)}\nRationale: {z}", 
             return_tensors="pt"
         ).to(pθ.device)
-        loss_z = pθ(**input_z, labels=input_z["input_ids"]).loss
+        with torch.no_grad():
+            loss_z = pθ(**input_z, labels=input_z["input_ids"]).loss
 
         reward = -(loss_x.item() + loss_z.item())
+        
+        # Clean up immediately
+        del input_x, input_z, loss_x, loss_z
+        
         return reward
     except Exception as e:
         return -100
 
-# === BATCHED E-STEP (FIXED) ===
+# === BATCHED E-STEP (VRAM-OPTIMIZED) ===
 def batched_e_step(qφ, batch_c, batch_x):
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
     inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True).to(qφ.device)
@@ -258,6 +264,10 @@ def batched_e_step(qφ, batch_c, batch_x):
     # Log average rationale length
     avg_length = sum(len(z) for z_list in z_candidates for z in z_list) / (len(batch_c) * K_SAMPLES) if z_candidates else 0
     log.debug(f"[E-STEP] Generated rationales - avg length: {avg_length:.1f} chars")
+    
+    # Aggressive VRAM cleanup (dual-model E-step needs this)
+    del inputs, outputs, sequences
+    torch.cuda.empty_cache()
     
     return z_candidates
 
@@ -620,6 +630,10 @@ else:
                 log.info(f"[WANDB] Batch {batch_num} logged successfully")
                 sys.stdout.flush()
                 
+                # Aggressive VRAM cleanup after each batch (dual-model needs this)
+                torch.cuda.empty_cache()
+                gc.collect()
+                
                 batch_c, batch_x = [], []
 
         # Process remaining batch if any
@@ -721,6 +735,10 @@ else:
             }, step=global_step)
             log.info(f"[WANDB] Final batch {batch_num} logged successfully")
             sys.stdout.flush()
+            
+            # Aggressive VRAM cleanup after final batch
+            torch.cuda.empty_cache()
+            gc.collect()
         
         # E-step summary
         if all_rewards:
