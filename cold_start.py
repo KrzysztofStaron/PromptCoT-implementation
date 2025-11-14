@@ -20,7 +20,7 @@
 # Training: MLE on seed ⟨c,z,x⟩ triplets (paper: lr=2e-5, batch=16, epochs=2)
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
 import json
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, BitsAndBytesConfig
 from datasets import Dataset
 from peft import LoraConfig, get_peft_model, TaskType
 from huggingface_hub import HfApi, create_repo
@@ -38,7 +38,8 @@ wandb.init(project="PromptCoT-coldstart")
 
 # BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
 # Base models provide high entropy, diversity, and non-deterministic exploration needed for EM
-# Paper uses Qwen2.5-32B-Base; we use Qwen2.5-14B-Base (scaled-down version)
+# Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
+# Using QLoRA (4-bit quantization + LoRA) for memory efficiency
 MODEL_NAME = "Qwen/Qwen2.5-7B"  # Base model (no -Instruct suffix)
 SEED_FILE = "./data/annotated.jsonl"
 OUTPUT_DIR_P = "./models/prompt_model"  # pθ: joint generator p(z,x|c)
@@ -120,7 +121,15 @@ rationale_texts = [format_rationale(ex) for ex in seed_data]
 rationale_ds = Dataset.from_dict({"text": rationale_texts}).map(tokenize, batched=True)
 print(f"Prepared qϕ dataset: {len(rationale_ds)} examples")
 
-# LoRA
+# QLoRA: 4-bit quantization config
+quantization_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_quant_type="nf4"
+)
+
+# LoRA config (same as before, QLoRA uses LoRA adapters)
 lora_config = LoraConfig(
     task_type=TaskType.CAUSAL_LM,
     r=64, lora_alpha=16, lora_dropout=0.05,
@@ -249,9 +258,11 @@ def train_and_save(dataset, path, repo_name, model_description):
     print(f"Training {model_description}")
     print(f"{'='*60}")
     
-    # Load model only when needed
+    # Load model with QLoRA (4-bit quantization + LoRA)
     base = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME, 
+        MODEL_NAME,
+        quantization_config=quantization_config,
+        device_map="auto",
         trust_remote_code=True
     )
     model = get_peft_model(base, lora_config)
