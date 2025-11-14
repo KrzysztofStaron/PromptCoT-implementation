@@ -134,7 +134,6 @@ training_args = TrainingArguments(
     num_train_epochs=2,  # Paper: 2 epochs for cold-start
     per_device_train_batch_size=2,
     gradient_accumulation_steps=8,  # Effective batch size = 2 * 8 = 16 (matches paper)
-    learning_rate=2e-5,  # Paper: 2e-5 for cold-start
     warmup_steps=10,
     logging_steps=10,
     save_steps=200,
