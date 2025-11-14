@@ -340,6 +340,11 @@ def m_step(model, triples, mode, em_iter_0_indexed):
     final_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else train_result.metrics.get('train_loss', 0)
     log.info(f"M-step for {mode} complete. Final loss: {final_loss:.4f}, Structure accuracy: {structure_accuracy:.2%}")
     
+    # Clean up trainer to free VRAM
+    del trainer
+    del ds
+    torch.cuda.empty_cache()
+    
     return final_loss, structure_accuracy
 
 # === HF UPLOAD (2 REPOS) ===
@@ -605,8 +610,27 @@ else:
         log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
         
         # M-step - collect losses and structure accuracies
+        # Move qφ to CPU to free VRAM while training pθ
+        log.info("[M-STEP] Moving qφ to CPU to free VRAM for pθ training...")
+        qφ_device = qφ.device
+        qφ.to('cpu')
+        torch.cuda.empty_cache()
+        
         prompt_loss, prompt_structure_accuracy = m_step(pθ, new_triples, "prompt", em_iter - 1)  # Convert to 0-indexed for m_step
+        
+        # Move qφ back to GPU and move pθ to CPU for qφ training
+        log.info("[M-STEP] Moving qφ back to GPU and moving pθ to CPU...")
+        qφ.to(qφ_device)
+        pθ_device = pθ.device
+        pθ.to('cpu')
+        torch.cuda.empty_cache()
+        
         rationale_loss, rationale_structure_accuracy = m_step(qφ, new_triples, "rationale", em_iter - 1)  # Convert to 0-indexed for m_step
+        
+        # Move pθ back to GPU
+        log.info("[M-STEP] Moving pθ back to GPU...")
+        pθ.to(pθ_device)
+        torch.cuda.empty_cache()
         
         # Log M-step to wandb
         m_step_global_step = e_step_global_step + 1

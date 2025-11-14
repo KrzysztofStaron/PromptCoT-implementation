@@ -213,7 +213,8 @@ def upload_to_hf(folder_path, repo_name, tags=None):
         repo_id=HF_REPO_ID,
         token=HF_TOKEN,
         repo_type="model",
-        exist_ok=True
+        exist_ok=True,
+        tags=tags if tags else None
     )
     
     # Build path_in_repo: <model_type>/<HF_VERSION>/cold-start/
@@ -232,11 +233,6 @@ def upload_to_hf(folder_path, repo_name, tags=None):
         path_in_repo=path_in_repo,
         repo_type="model",
     )
-    
-    # Add tags if provided
-    if tags:
-        for tag in tags:
-            api.add_model_tag(repo_id=HF_REPO_ID, tag=tag, token=HF_TOKEN)
     
     print(f"Uploaded {repo_name} to HuggingFace Hub as {HF_REPO_ID}/{path_in_repo}")
 
@@ -284,15 +280,18 @@ def train_and_save(dataset, path, repo_name, model_description):
     model.save_pretrained(path)
     print(f"✓ Saved {model_description} to {path}")
     
+    # Clean up GPU memory before upload
+    del trainer
+    torch.cuda.empty_cache()
+    
     # Upload to HuggingFace if flag is set
     if PUSH_TO_HF:
         print(f"Uploading {repo_name} to HuggingFace Hub...")
         upload_to_hf(path, repo_name, tags=HF_TAGS)
     
-    # Clean up GPU memory
+    # Final cleanup of model from VRAM
     del model
     del base
-    del trainer
     torch.cuda.empty_cache()
     print(f"✓ Completed training {model_description}\n")
 
