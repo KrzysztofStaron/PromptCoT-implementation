@@ -318,11 +318,65 @@ def is_hard_problem(problem: str, problem_type: str = "math", save_immediately: 
     return hard
 
 
+def collect_codeforces_problems() -> List[Dict[str, str]]:
+    codeforces_csv = BASE_DIR / "codeforces.csv"
+    if not codeforces_csv.exists():
+        return []
+    
+    bank: List[Dict[str, str]] = []
+    new_cache_entries = 0
+    rating_pattern = re.compile(r"\*(\d+)")
+    
+    with open(codeforces_csv, "r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row_num, row in enumerate(reader):
+            problem_statement = row.get("problem_statement", "").strip()
+            if not problem_statement:
+                continue
+            
+            problem_tags = row.get("problem_tags", "")
+            rating_match = rating_pattern.search(problem_tags)
+            if not rating_match:
+                continue
+            
+            rating = int(rating_match.group(1))
+            if rating < 2200:
+                continue
+            
+            problem = clean_prompt(problem_statement)
+            if not problem:
+                continue
+            
+            was_cached = problem in HARDNESS_CACHE
+            if not is_hard_problem(problem, problem_type="coding"):
+                continue
+            if not was_cached:
+                new_cache_entries += 1
+            
+            contest = row.get("contest", "")
+            problem_name = row.get("problem_name", "")
+            source_id = f"codeforces:{contest}{problem_name}:{row_num}"
+            
+            bank.append(
+                {
+                    "source": "codeforces",
+                    "source_id": source_id,
+                    "problem": problem,
+                    "problem_type": "coding",
+                }
+            )
+    
+    if new_cache_entries > 0:
+        save_hardness_cache()
+        print(f"💾 Saved {new_cache_entries} new hardness results to cache")
+    return bank
+
+
 def collect_problem_bank() -> List[Dict[str, str]]:
     dataset_paths: List[Path] = []
     if BASE_DIR.exists():
         for candidate in BASE_DIR.rglob("*.jsonl"):
-            if candidate.name == CONCEPT_FILE.name:
+            if candidate.name == CONCEPT_FILE.name or candidate.name == CODING_CONCEPT_FILE.name:
                 continue
             if candidate.name in OLYMPIAD_SOURCE_FILES:
                 dataset_paths.append(candidate)
@@ -343,7 +397,7 @@ def collect_problem_bank() -> List[Dict[str, str]]:
                 if not problem:
                     continue
                 was_cached = problem in HARDNESS_CACHE
-                if not is_hard_problem(problem):
+                if not is_hard_problem(problem, problem_type="math"):
                     continue
                 if not was_cached:
                     new_cache_entries += 1
@@ -357,11 +411,17 @@ def collect_problem_bank() -> List[Dict[str, str]]:
                         "source_id": source_id,
                         "problem": problem,
                         "solution": solution,
+                        "problem_type": "math",
                     }
                 )
     if new_cache_entries > 0:
         save_hardness_cache()
         print(f"💾 Saved {new_cache_entries} new hardness results to cache")
+    
+    # Add codeforces problems
+    codeforces_problems = collect_codeforces_problems()
+    bank.extend(codeforces_problems)
+    
     return bank
 
 
@@ -445,14 +505,59 @@ def build_prompt(problem: str, concept_examples: List[str]) -> str:
 ```"""
 
 
+def build_coding_prompt(problem: str, concept_examples: List[str]) -> str:
+    """
+    PromptCoT 2.0 Cold-Start Prompt for Coding Problems: (c) → (c, z)
+    Input: problem (x), concept pool
+    Output: JSON { "concepts": [...5...], "rationale": "design plan" }
+    NO SOLUTION SHOWN. NO CODE. PURE META-REASONING.
+    """
+    # Sample 15–25 atomic concepts for diversity
+    sample_size = min(25, len(concept_examples))
+    selected = random.sample(concept_examples, sample_size)
+    bullets = "\n".join(f"- {c}" for c in selected)
+
+    return f"""You are a **Competitive programming problem architect**. Your task is to **reverse-engineer a design blueprint** (`z`) that explains **how to construct a problem like the one below**, using **exactly 5 concepts** from the list.
+
+**DO NOT solve the problem.**  
+**DO NOT write code or pseudocode.**  
+**DO NOT mention the solution approach.**  
+**DO NOT restate the algorithmic solution path.**
+
+---
+
+**Target Problem (already written):**
+{problem.strip()}
+
+---
+
+**Concept Bank, feel free to use them, or invent your own:**
+{bullets}
+
+---
+
+**Output JSON only** (no extra text):
+```json
+{{
+  "concepts": ["Concept1", "Concept2", "Concept3", "Concept4", "Concept5"],
+  "rationale": "Multi-step design plan, on how to construct the problem using the concepts. Example: Select..., Force..., Weave..., Ensure..., Stress-test..., Refine..."
+}}
+
+```"""
+
+
 def annotate_with_model(
     problem: str,
     model_cfg: Dict[str, str],
     concept_pool: List[str],
+    problem_type: str = "math",
 ) -> Optional[Dict[str, object]]:
     sample_size = min(20, len(concept_pool))
     concept_examples = random.sample(concept_pool, sample_size) if sample_size else []
-    prompt = build_prompt(problem, concept_examples)
+    if problem_type == "coding":
+        prompt = build_coding_prompt(problem, concept_examples)
+    else:
+        prompt = build_prompt(problem, concept_examples)
 
     try:
         if model_cfg["provider"] == "openai":
@@ -552,12 +657,19 @@ def main() -> None:
     if cache_size > 0:
         print(f"📦 Loaded {cache_size} cached hardness results")
     
-    concept_pool = collect_atomic_concepts()
-    if not concept_pool:
-        print("⚠️  Concept pool is empty; continuing but prompts will omit examples.")
+    # Load both concept pools
+    math_concept_pool = load_concept_pool()
+    coding_concept_pool = load_coding_concept_pool()
+    
+    if not math_concept_pool and not coding_concept_pool:
+        print("⚠️  Concept pools are empty; continuing but prompts will omit examples.")
+    else:
+        print(f"📚 Loaded {len(math_concept_pool)} math concepts and {len(coding_concept_pool)} coding concepts")
 
     problem_bank = collect_problem_bank()
-    print(f"📚 Loaded {len(problem_bank)} problems from {DATA_DIR} (tokens removed)")
+    math_count = sum(1 for p in problem_bank if p.get("problem_type") == "math")
+    coding_count = sum(1 for p in problem_bank if p.get("problem_type") == "coding")
+    print(f"📚 Loaded {len(problem_bank)} problems from {DATA_DIR} ({math_count} math, {coding_count} coding)")
 
     active_models = select_active_models()
     if not active_models:
@@ -580,11 +692,15 @@ def main() -> None:
         if item["source_id"] in completed_ids:
             continue
 
+        problem_type = item.get("problem_type", "math")
+        concept_pool = coding_concept_pool if problem_type == "coding" else math_concept_pool
+        
         model_cfg = active_models[model_index % len(active_models)]
         annotation = annotate_with_model(
             item["problem"],
             model_cfg,
             concept_pool,
+            problem_type=problem_type,
         )
         total_requests += 1
 
@@ -598,6 +714,7 @@ def main() -> None:
                 "rationale": annotation["rationale"],
                 "model": model_cfg["name"],
                 "provider": model_cfg["provider"],
+                "problem_type": problem_type,
             }
             results.append(record)
             completed_ids.add(item["source_id"])
@@ -605,10 +722,10 @@ def main() -> None:
             model_index = processed_count % len(active_models)
             persist_results(results)
             print(
-                f"✓ {item['source_id']} via {model_cfg['label']} — total {len(results)} entries"
+                f"✓ {item['source_id']} ({problem_type}) via {model_cfg['label']} — total {len(results)} entries"
             )
         else:
-            print(f"✗ {item['source_id']} via {model_cfg['label']} (no annotation)")
+            print(f"✗ {item['source_id']} ({problem_type}) via {model_cfg['label']} (no annotation)")
             model_index = (model_index + 1) % len(active_models)
 
         time.sleep(0.5)
