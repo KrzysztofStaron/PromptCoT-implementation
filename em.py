@@ -6,7 +6,6 @@ from datasets import Dataset
 from peft import PeftModel
 import os
 import logging
-import wandb
 from huggingface_hub import HfApi, create_repo
 from dotenv import load_dotenv
 from tieBreaker import select_best_rationale
@@ -29,26 +28,6 @@ USE_GROQ_TIEBREAKER = True
 
 # Create checkpoint directory if it doesn't exist
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-
-# Initialize wandb
-try:
-    wandb.init(
-        project="promptcot-2.0",
-        name="em-training",
-        config={
-            "model": MODEL_NAME,
-            "k_samples": K_SAMPLES,
-            "batch_size": BATCH_SIZE,
-            "em_iters": EM_ITERS,
-        }
-    )
-    # Define custom metrics (optional, helps with organization in UI)
-    wandb.define_metric("em_iteration")
-    log.info(f"✅ Wandb initialized successfully. Run: {wandb.run.name if wandb.run else 'N/A'}")
-    log.info(f"✅ View logs at: {wandb.run.url if wandb.run else 'N/A'}")
-except Exception as e:
-    log.warning(f"⚠️  Failed to initialize wandb: {e}. Continuing without wandb logging.")
-    wandb = None
 
 # === TOKENIZER ===
 log.info("Loading tokenizer...")
@@ -213,28 +192,21 @@ def m_step(model, triples, mode, em_iter):
             per_device_train_batch_size=2,
             num_train_epochs=1,
             bf16=True,
-            report_to="none",  # Disable auto-logging, we log manually with explicit steps
+            report_to="none",  # Disable auto-logging, we log manually
             logging_steps=10,
             log_level="info",
             run_name=f"m_step_{mode}_iter{em_iter+1}"
         ),
         train_dataset=ds,
-        data_collator=data_collator  # ← CRITICAL FIX: Pad dynamically for LM
+        data_collator=data_collator
     )
     train_result = trainer.train()
     
-    # Log final training loss to wandb with explicit step
+    # Return loss instead of logging here - we'll log all M-step metrics together
     final_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else train_result.metrics.get('train_loss', 0)
-    if wandb and wandb.run:
-        metrics = {
-            f"m_step/{mode}_loss": final_loss,
-            f"m_step/{mode}_num_samples": len(triples),
-            "em_iteration": em_iter + 1
-        }
-        wandb.log(metrics, step=em_iter + 1)
-        log.info(f"[WANDB] Logged M-step {mode} metrics: loss={final_loss:.4f}, samples={len(triples)}")
-    
     log.info(f"M-step for {mode} complete. Final loss: {final_loss:.4f}")
+    
+    return final_loss
 
 # === HF UPLOAD (2 REPOS) ===
 def upload_checkpoint(pθ, qφ, iter_num):
@@ -307,18 +279,7 @@ else:
                 avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
                 log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
                 
-                # Log batch metrics to wandb with explicit step
-                # All metrics use em_iteration as x-axis, so we log with em_iter + 1
-                if wandb and wandb.run:
-                    metrics = {
-                        "e_step/batch_reward_avg": avg_reward,
-                        "e_step/batch_reward_max": max(batch_rewards) if batch_rewards else 0,
-                        "e_step/batch_num": batch_num,
-                        "em_iteration": em_iter + 1
-                    }
-                    wandb.log(metrics, step=em_iter + 1)
-                    if batch_num == 1:  # Log first batch to confirm it works
-                        log.info(f"[WANDB] Logged batch metrics (first batch): {metrics}")
+                # Don't log batch metrics here - we'll log summary metrics once per iteration
                 
                 batch_c, batch_x = [], []
 
@@ -347,56 +308,31 @@ else:
             avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
             log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
             
-            # Log final batch metrics to wandb with explicit step
-            if wandb and wandb.run:
-                metrics = {
-                    "e_step/batch_reward_avg": avg_reward,
-                    "e_step/batch_reward_max": max(batch_rewards) if batch_rewards else 0,
-                    "e_step/batch_num": batch_num,
-                    "em_iteration": em_iter + 1
-                }
-                wandb.log(metrics, step=em_iter + 1)
+            # Don't log batch metrics here - we'll log summary metrics once per iteration
         
         # E-step summary
         if all_rewards:
             avg_reward = sum(all_rewards) / len(all_rewards)
             max_reward = max(all_rewards)
             min_reward = min(all_rewards)
+            std_reward = (sum((r - avg_reward) ** 2 for r in all_rewards) / len(all_rewards)) ** 0.5 if len(all_rewards) > 1 else 0.0
             log.info(f"[E-STEP] Complete! Selected {len(new_triples)} triples")
-            log.info(f"[E-STEP] Reward stats - Avg: {avg_reward:.2f}, Max: {max_reward:.2f}, Min: {min_reward:.2f}")
-            
-            # Log to wandb with explicit step
-            if wandb and wandb.run:
-                metrics = {
-                    "e_step/reward_avg": avg_reward,
-                    "e_step/reward_max": max_reward,
-                    "e_step/reward_min": min_reward,
-                    "e_step/triples_selected": len(new_triples),
-                    "em_iteration": em_iter + 1
-                }
-                wandb.log(metrics, step=em_iter + 1)
-                log.info(f"[WANDB] Logged E-step summary metrics: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
+            log.info(f"[E-STEP] Reward stats - Avg: {avg_reward:.2f}, Max: {max_reward:.2f}, Min: {min_reward:.2f}, Std: {std_reward:.2f}")
+        else:
+            avg_reward = 0.0
+            max_reward = 0.0
+            min_reward = 0.0
+            std_reward = 0.0
         
-        # M-step with wandb logging
-        m_step(pθ, new_triples, "prompt", em_iter)
-        m_step(qφ, new_triples, "rationale", em_iter)
+        # M-step - collect losses
+        prompt_loss = m_step(pθ, new_triples, "prompt", em_iter)
+        rationale_loss = m_step(qφ, new_triples, "rationale", em_iter)
         
         current_triples = new_triples
         # Save checkpoint after each iteration
         save_checkpoint(em_iter, current_triples)
         upload_checkpoint(pθ, qφ, em_iter)
         
-        # Log iteration complete with explicit step
-        if wandb and wandb.run:
-            metrics = {
-                "em_iteration/complete": 1,
-                "em_iteration/num_triples": len(current_triples),
-                "em_iteration": em_iter + 1
-            }
-            wandb.log(metrics, step=em_iter + 1)
-            if em_iter == start_iter:  # Log first iteration to confirm
-                log.info(f"[WANDB] Logged iteration complete: {metrics}")
+        # Wandb logging disabled
 
     log.info("DONE!")
-if wandb:
-    wandb.finish()
