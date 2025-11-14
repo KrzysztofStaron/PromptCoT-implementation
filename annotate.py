@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import random
@@ -21,6 +22,7 @@ openai.api_key = OPENAI_API_KEY
 DATA_DIR = Path("data")
 BASE_DIR = DATA_DIR / "base"
 CONCEPT_FILE = BASE_DIR / "mathematics_concepts.jsonl"
+CODING_CONCEPT_FILE = BASE_DIR / "promptcot_concepts_20k.jsonl"
 OUTPUT_FILE = DATA_DIR / "annotated.jsonl"
 HARDNESS_CACHE_FILE = DATA_DIR / "hardness_cache.json"
 
@@ -97,6 +99,20 @@ def load_concept_pool() -> List[str]:
     if not CONCEPT_FILE.exists():
         return pool
     with open(CONCEPT_FILE, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            data = json.loads(line)
+            pool.extend(expand_atomic_concepts(data.get("concepts", [])))
+    unique = list({concept.strip(): None for concept in pool}.keys())
+    return unique
+
+
+def load_coding_concept_pool() -> List[str]:
+    pool: List[str] = []
+    if not CODING_CONCEPT_FILE.exists():
+        return pool
+    with open(CODING_CONCEPT_FILE, "r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
@@ -228,15 +244,72 @@ def attempt_baseline_solve(problem: str) -> str:
         return ""
 
 
-def is_hard_problem(problem: str, save_immediately: bool = False) -> bool:
+def attempt_baseline_solve_coding(problem: str) -> str:
+    if not OPENROUTER_API_KEY:
+        return ""
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/PromptCoT",
+        "X-Title": "PromptCoT Hardness Filter",
+    }
+    payload = {
+        "model": BASELINE_SOLVER_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "Attempt to solve this competitive programming problem. Respond with the solution "
+                    "if you are certain, otherwise say 'unsure'.\n\n"
+                    f"Problem:\n{problem}"
+                ),
+            }
+        ],
+        "max_tokens": 64,
+        "temperature": 0.1,
+        "provider": {
+            "sort": "throughput",
+        },
+    }
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data["choices"][0]["message"].get("content", "")
+        if isinstance(content, list):
+            text = "".join(
+                str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                for part in content
+            ).strip()
+            return text
+        if isinstance(content, str):
+            return content.strip()
+        return ""
+    except Exception:
+        return ""
+
+
+def is_hard_problem(problem: str, problem_type: str = "math", save_immediately: bool = False) -> bool:
     if problem in HARDNESS_CACHE:
         return HARDNESS_CACHE[problem]
-    attempt = attempt_baseline_solve(problem)
+    if problem_type == "coding":
+        attempt = attempt_baseline_solve_coding(problem)
+    else:
+        attempt = attempt_baseline_solve(problem)
     lowered = attempt.lower()
     hard = True
     if lowered:
-        if "\\boxed" in lowered or "answer" in lowered:
-            hard = False
+        if problem_type == "coding":
+            if "solution" in lowered and "unsure" not in lowered:
+                hard = False
+        else:
+            if "\\boxed" in lowered or "answer" in lowered:
+                hard = False
         if "unsure" in lowered or "cannot" in lowered or "fail" in lowered:
             hard = True
     HARDNESS_CACHE[problem] = hard
