@@ -22,6 +22,7 @@
 #
 # H200 OPTIMIZED: Using Unsloth for 450+ TFLOPS (vs 80-120 TFLOPS with vanilla HF Trainer)
 # Expected training time: ~15 minutes total (vs 1-2 hours)
+from unsloth import FastLanguageModel
 import json
 from transformers import TrainingArguments
 from datasets import Dataset
@@ -33,7 +34,6 @@ import wandb
 from hf_config import HF_USERNAME, HF_VERSION, HF_TAGS, HF_REPO_ID, HF_P_BASE_PATH, HF_Q_BASE_PATH
 
 # Unsloth for H200 max performance (450+ TFLOPS)
-from unsloth import FastLanguageModel
 
 # Load environment variables from .env file
 load_dotenv()
