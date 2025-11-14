@@ -3,6 +3,7 @@ import json
 import re
 import os
 import logging
+import random
 from typing import List, Tuple, Optional
 import requests
 from dotenv import load_dotenv
@@ -210,6 +211,7 @@ def break_tie_with_groq(
     best_score = scores[0][1]
     
     log.info(f"[TIEBREAKER] Selected rationale {best_idx} with score {best_score:.2f}")
+    log.info(f"[TIEBREAKER] All scores (index, score): {scores}")
     
     # Log all scores for debugging
     if log.isEnabledFor(logging.DEBUG):
@@ -253,9 +255,16 @@ def select_best_rationale(
     
     # Check if reward signal is ambiguous
     if use_groq and use_tiebreaker(rewards, REWARD_THRESHOLD):
-        log.info(f"[SELECT] Reward signal ambiguous (spread={max(rewards)-min(rewards):.3f}), using Groq tiebreaker")
-        best_idx = break_tie_with_groq(concepts, problem, rationales, rewards)
-        return best_idx, rationales[best_idx]
+        # Only use tiebreaker 1% of the time to avoid slowdown
+        if random.random() < 0.015:
+            log.info(f"[SELECT] Reward signal ambiguous (spread={max(rewards)-min(rewards):.3f}), using Groq tiebreaker")
+            best_idx = break_tie_with_groq(concepts, problem, rationales, rewards)
+            return best_idx, rationales[best_idx]
+        else:
+            # Fall back to reward-based selection (99% of ambiguous cases)
+            best_idx = rewards.index(max(rewards))
+            log.debug(f"[SELECT] Reward ambiguous but skipping tiebreaker (1% sampling), using reward: idx={best_idx}, reward={rewards[best_idx]:.3f}")
+            return best_idx, rationales[best_idx]
     else:
         # Use reward-based selection
         best_idx = rewards.index(max(rewards))

@@ -7,4 +7,5 @@ bitsandbytes>=0.41.0
 huggingface_hub>=0.20.0
 python-dotenv>=1.0.0
 requests>=2.31.0
+wandb>=0.15.0
 

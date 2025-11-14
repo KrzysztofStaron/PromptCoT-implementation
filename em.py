@@ -1,4 +1,14 @@
 # em.py — FINAL, RUNNING ON H200
+# PromptCoT EM Loop Training
+#
+# CRITICAL: We use BASE models, NOT INSTRUCT models, for faithful PromptCoT 2.0 reproduction.
+# Base models provide:
+#   - High entropy and diversity (needed for EM exploration)
+#   - Non-deterministic rationale generation
+#   - No instruction-tuning biases that collapse rationale structures
+#   - Ability to rebuild the problem-generation model from scratch (not fine-tune existing one)
+#
+# Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
 import json
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
@@ -9,6 +19,7 @@ import logging
 from huggingface_hub import HfApi, create_repo
 from dotenv import load_dotenv
 from tieBreaker import select_best_rationale
+import wandb
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -18,7 +29,10 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 # === CONFIG ===
-MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
+# BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
+# Both pθ and qφ are initialized from the same base checkpoint
+# Paper uses Qwen2.5-32B-Base; we use Qwen2.5-14B-Base (scaled-down version)
+MODEL_NAME = "Qwen/Qwen2.5-14B"  # Base model (no -Instruct suffix)
 SEED_FILE = "./data/annotated.jsonl"
 CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 10
@@ -28,6 +42,19 @@ USE_GROQ_TIEBREAKER = True
 
 # Create checkpoint directory if it doesn't exist
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+# === WANDB INIT ===
+wandb.init(
+    project="promptcot-em",
+    name=f"em_training_{EM_ITERS}iters_k{K_SAMPLES}",
+    config={
+        "model": MODEL_NAME,
+        "em_iterations": EM_ITERS,
+        "k_samples": K_SAMPLES,
+        "batch_size": BATCH_SIZE,
+        "use_groq_tiebreaker": USE_GROQ_TIEBREAKER,
+    }
+)
 
 # === TOKENIZER ===
 log.info("Loading tokenizer...")
@@ -40,22 +67,35 @@ tokenizer = AutoTokenizer.from_pretrained(
 tokenizer.pad_token = tokenizer.eos_token
 
 # === MODELS ===
-log.info("Loading base...")
-base = AutoModelForCausalLM.from_pretrained(
+log.info("Loading base model for pθ...")
+base_p = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
-    dtype=torch.bfloat16,
+    torch_dtype=torch.bfloat16,
     device_map="auto",
     trust_remote_code=True
 )
 
 log.info("Loading pθ...")
-pθ = PeftModel.from_pretrained(base, "./models/prompt_model", is_trainable=True)
+pθ = PeftModel.from_pretrained(base_p, "./models/prompt_model", is_trainable=True)
+
+log.info("Loading base model for qφ...")
+base_q = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True
+)
+
 log.info("Loading qφ...")
-qφ = PeftModel.from_pretrained(base, "./models/rationale_model", is_trainable=True)
+qφ = PeftModel.from_pretrained(base_q, "./models/rationale_model", is_trainable=True)
 
 # === CHECKPOINT MANAGEMENT ===
 def find_latest_checkpoint():
-    """Find the latest checkpoint iteration number."""
+    """
+    Find the latest checkpoint iteration number.
+    Returns 1-indexed iteration number (e.g., 1, 2, 3, ...)
+    Handles migration from 0-indexed (iter_0) to 1-indexed (iter_1, iter_2, ...).
+    """
     if not os.path.exists(CHECKPOINT_DIR):
         return None
     
@@ -71,18 +111,44 @@ def find_latest_checkpoint():
         except (ValueError, IndexError):
             continue
     
-    return max(iterations) if iterations else None
-
-def load_checkpoint(iter_num):
-    """Load triples from a specific checkpoint iteration."""
-    checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num}_triples.jsonl")
-    if not os.path.exists(checkpoint_file):
+    if not iterations:
         return None
     
-    with open(checkpoint_file) as f:
-        triples = [json.loads(line) for line in f]
-    log.info(f"Loaded checkpoint from iteration {iter_num}: {len(triples)} triples")
-    return triples
+    max_iter = max(iterations)
+    # Handle migration: if max_iter is 0, it's old 0-indexed format (iter_0 = iteration 1 completed)
+    # Otherwise, assume 1-indexed format (iter_1 = iteration 1 completed, iter_2 = iteration 2 completed, etc.)
+    if max_iter == 0:
+        # Old format: iter_0 means iteration 1 completed (1-indexed)
+        return 1
+    # New format: iter_1 means iteration 1 completed, iter_2 means iteration 2 completed, etc.
+    return max_iter
+
+def load_checkpoint(iter_num_1_indexed):
+    """
+    Load triples from a specific checkpoint iteration.
+    
+    Args:
+        iter_num_1_indexed: 1-indexed iteration number (e.g., 1, 2, 3, ...)
+    """
+    # Try 1-indexed format first (iter_1, iter_2, ...)
+    checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num_1_indexed}_triples.jsonl")
+    if os.path.exists(checkpoint_file):
+        with open(checkpoint_file) as f:
+            triples = [json.loads(line) for line in f]
+        log.info(f"Loaded checkpoint from iteration {iter_num_1_indexed}: {len(triples)} triples")
+        return triples
+    
+    # Fallback: try 0-indexed format for backward compatibility (iter_0 = iteration 1)
+    if iter_num_1_indexed == 1:
+        old_checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_0_triples.jsonl")
+        if os.path.exists(old_checkpoint_file):
+            with open(old_checkpoint_file) as f:
+                triples = [json.loads(line) for line in f]
+            log.info(f"Loaded checkpoint from iteration 1 (old format iter_0): {len(triples)} triples")
+            return triples
+    
+    log.warning(f"Checkpoint file not found for iteration {iter_num_1_indexed}")
+    return None
 
 def save_checkpoint(iter_num, triples):
     """Save triples to checkpoint file."""
@@ -93,17 +159,19 @@ def save_checkpoint(iter_num, triples):
     log.info(f"Saved checkpoint: {checkpoint_file} ({len(triples)} triples)")
 
 # === LOAD DATA (from checkpoint or seed) ===
+# Note: All iterations are 1-indexed (iter_1, iter_2, etc.)
 latest_iter = find_latest_checkpoint()
 if latest_iter is not None:
     log.info(f"Found latest checkpoint at iteration {latest_iter}")
     current_triples = load_checkpoint(latest_iter)
+    # latest_iter is the completed iteration, so start from the next one
     start_iter = latest_iter + 1
     log.info(f"Resuming from iteration {start_iter}")
 else:
     log.info("No checkpoint found, starting from seed data")
     with open(SEED_FILE) as f:
         current_triples = [json.loads(line) for line in f]
-    start_iter = 0
+    start_iter = 1  # Start from iteration 1 (1-indexed)
     log.info(f"Loaded {len(current_triples)} triples from seed file")
 
 log.info(f"Starting EM loop from iteration {start_iter}, total iterations: {EM_ITERS}")
@@ -166,7 +234,16 @@ def batched_e_step(qφ, batch_c, batch_x):
     return z_candidates
 
 # === M-STEP ===
-def m_step(model, triples, mode, em_iter):
+def m_step(model, triples, mode, em_iter_0_indexed):
+    """
+    M-step training.
+    
+    Args:
+        model: The model to train
+        triples: Training triples
+        mode: "prompt" or "rationale"
+        em_iter_0_indexed: 0-indexed iteration number (for backward compatibility with TrainingArguments)
+    """
     log.info(f"Starting M-step for {mode} model with {len(triples)} triples")
     texts = []
     for idx, t in enumerate(triples):
@@ -195,7 +272,7 @@ def m_step(model, triples, mode, em_iter):
             report_to="none",  # Disable auto-logging, we log manually
             logging_steps=10,
             log_level="info",
-            run_name=f"m_step_{mode}_iter{em_iter+1}"
+            run_name=f"m_step_{mode}_iter{em_iter_0_indexed+1}"
         ),
         train_dataset=ds,
         data_collator=data_collator
@@ -233,11 +310,12 @@ def upload_checkpoint(pθ, qφ, iter_num):
     log.info(f"q iter-{iter_num} → {q_repo}/iter-{iter_num}")
 
 # === MAIN LOOP ===
-if start_iter >= EM_ITERS:
+# Note: em_iter is 1-indexed (1, 2, 3, ...)
+if start_iter > EM_ITERS:
     log.warning(f"Latest checkpoint is at iteration {latest_iter}, but EM_ITERS={EM_ITERS}. Nothing to do.")
 else:
-    for em_iter in range(start_iter, EM_ITERS):
-        log.info(f"\nEM ITER {em_iter+1}/{EM_ITERS} (resumed from {start_iter})")
+    for em_iter in range(start_iter, EM_ITERS + 1):
+        log.info(f"\nEM ITER {em_iter}/{EM_ITERS} (resumed from {start_iter})")
         
         # === E-STEP ===
         log.info(f"[E-STEP] Starting E-step with {len(current_triples)} triples")
@@ -246,6 +324,7 @@ else:
         total_batches = (len(current_triples) + BATCH_SIZE - 1) // BATCH_SIZE
         batch_num = 0
         all_rewards = []
+        total_tiebreaker_count = 0
         
         for t in current_triples:
             batch_c.append(t["concepts"])
@@ -258,28 +337,78 @@ else:
                 z_cands = batched_e_step(qφ, batch_c, batch_x)
                 log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
                 
+                # Calculate average rationale lengths for this batch
+                batch_rationale_lengths = [len(z) for z_list in z_cands for z in z_list]
+                avg_rationale_length = sum(batch_rationale_lengths) / len(batch_rationale_lengths) if batch_rationale_lengths else 0
+                
                 log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
                 batch_rewards = []
+                batch_selected_rewards = []
+                batch_tiebreaker_count = 0
+                
                 for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
                     rewards = [compute_reward(pθ, c, x, z) for z in z_list]
                     batch_rewards.extend(rewards)
+                    
+                    # Track tiebreaker usage
+                    reward_spread = max(rewards) - min(rewards) if rewards else 0
+                    used_tiebreaker = USE_GROQ_TIEBREAKER and reward_spread < 0.5
+                    if used_tiebreaker:
+                        batch_tiebreaker_count += 1
+                    
                     best_idx, best_z = select_best_rationale(
                         c,
                         x,
                         z_list,
                         rewards,
-                        use_groq=USE_GROQ_TIEBREAKER
+                        use_groq=USE_GROQ_TIEBREAKER,
+                        iteration=em_iter
                     )
-                    all_rewards.append(rewards[best_idx])
+                    selected_reward = rewards[best_idx]
+                    batch_selected_rewards.append(selected_reward)
+                    all_rewards.append(selected_reward)
                     new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
+                    
+                    # Log winning rationale details
+                    if used_tiebreaker:
+                        log.info(f"[WINNER] 🎯 Tiebreaker selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
+                        log.info(f"[WINNER] Problem: {x[:100]}..." if len(x) > 100 else f"[WINNER] Problem: {x}")
+                        log.info(f"[WINNER] All candidate rewards: {[f'{r:.3f}' for r in rewards]}")
+                        log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
+                    elif (i + 1) % 8 == 0:
+                        # Log every 8th winning rationale when not using tiebreaker
+                        log.info(f"[WINNER] Selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
+                        log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
                     
                     if (i + 1) % 4 == 0:
                         log.info(f"[E-STEP]   Processed {i+1}/{len(batch_c)} samples in batch")
                 
-                avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-                log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
+                total_tiebreaker_count += batch_tiebreaker_count
                 
-                # Don't log batch metrics here - we'll log summary metrics once per iteration
+                # Compute batch statistics
+                avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
+                max_reward = max(batch_rewards) if batch_rewards else 0
+                min_reward = min(batch_rewards) if batch_rewards else 0
+                std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
+                avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
+                
+                log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
+                log.info(f"[E-STEP] Batch {batch_num} summary: {batch_tiebreaker_count}/{len(batch_c)} used tiebreaker ({batch_tiebreaker_count/len(batch_c)*100:.1f}%)")
+                
+                # Log batch metrics to wandb
+                global_step = ((em_iter - 1) * total_batches) + batch_num
+                wandb.log({
+                    "batch/iteration": em_iter,
+                    "batch/batch_num": batch_num,
+                    "batch/reward_avg_all": avg_reward,
+                    "batch/reward_avg_selected": avg_selected_reward,
+                    "batch/reward_max": max_reward,
+                    "batch/reward_min": min_reward,
+                    "batch/reward_std": std_reward,
+                    "batch/avg_rationale_length": avg_rationale_length,
+                    "batch/tiebreaker_usage": batch_tiebreaker_count,
+                    "batch/samples": len(batch_c),
+                }, step=global_step)
                 
                 batch_c, batch_x = [], []
 
@@ -291,24 +420,75 @@ else:
             z_cands = batched_e_step(qφ, batch_c, batch_x)
             log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
             
+            # Calculate average rationale lengths for this batch
+            batch_rationale_lengths = [len(z) for z_list in z_cands for z in z_list]
+            avg_rationale_length = sum(batch_rationale_lengths) / len(batch_rationale_lengths) if batch_rationale_lengths else 0
+            
             log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
             batch_rewards = []
+            batch_selected_rewards = []
+            batch_tiebreaker_count = 0
+            
             for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
                 rewards = [compute_reward(pθ, c, x, z) for z in z_list]
                 batch_rewards.extend(rewards)
+                
+                # Track tiebreaker usage
+                reward_spread = max(rewards) - min(rewards) if rewards else 0
+                used_tiebreaker = USE_GROQ_TIEBREAKER and reward_spread < 0.5
+                if used_tiebreaker:
+                    batch_tiebreaker_count += 1
+                
                 best_idx, best_z = select_best_rationale(
                     c,
                     x,
                     z_list,
                     rewards,
-                    use_groq=USE_GROQ_TIEBREAKER
+                    use_groq=USE_GROQ_TIEBREAKER,
+                    iteration=em_iter
                 )
-                all_rewards.append(rewards[best_idx])
+                selected_reward = rewards[best_idx]
+                batch_selected_rewards.append(selected_reward)
+                all_rewards.append(selected_reward)
                 new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
-            avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-            log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max(batch_rewards):.2f}")
+                
+                # Log winning rationale details
+                if used_tiebreaker:
+                    log.info(f"[WINNER] 🎯 Tiebreaker selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
+                    log.info(f"[WINNER] Problem: {x[:100]}..." if len(x) > 100 else f"[WINNER] Problem: {x}")
+                    log.info(f"[WINNER] All candidate rewards: {[f'{r:.3f}' for r in rewards]}")
+                    log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
+                elif (i + 1) % 4 == 0:
+                    # Log every 4th winning rationale in final batch
+                    log.info(f"[WINNER] Selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
+                    log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
             
-            # Don't log batch metrics here - we'll log summary metrics once per iteration
+            total_tiebreaker_count += batch_tiebreaker_count
+            
+            # Compute batch statistics
+            avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
+            max_reward = max(batch_rewards) if batch_rewards else 0
+            min_reward = min(batch_rewards) if batch_rewards else 0
+            std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
+            avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
+            
+            log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
+            log.info(f"[E-STEP] Final batch summary: {batch_tiebreaker_count}/{len(batch_c)} used tiebreaker ({batch_tiebreaker_count/len(batch_c)*100:.1f}%)")
+            
+            # Log batch metrics to wandb
+            global_step = (em_iter * total_batches) + batch_num
+            wandb.log({
+                "batch/iteration": em_iter + 1,
+                "batch/batch_num": batch_num,
+                "batch/reward_avg_all": avg_reward,
+                "batch/reward_avg_selected": avg_selected_reward,
+                "batch/reward_max": max_reward,
+                "batch/reward_min": min_reward,
+                "batch/reward_std": std_reward,
+                "batch/avg_rationale_length": avg_rationale_length,
+                "batch/tiebreaker_usage": batch_tiebreaker_count,
+                "batch/samples": len(batch_c),
+            }, step=global_step)
         
         # E-step summary
         if all_rewards:
@@ -324,15 +504,47 @@ else:
             min_reward = 0.0
             std_reward = 0.0
         
+        # Log E-step summary to wandb
+        e_step_global_step = ((em_iter - 1) * total_batches) + total_batches
+        wandb.log({
+            "e_step/iteration": em_iter,
+            "e_step/reward_avg": avg_reward,
+            "e_step/reward_max": max_reward,
+            "e_step/reward_min": min_reward,
+            "e_step/reward_std": std_reward,
+            "e_step/num_triples": len(new_triples),
+            "e_step/tiebreaker_total": total_tiebreaker_count,
+            "e_step/tiebreaker_percentage": (total_tiebreaker_count / len(new_triples) * 100) if new_triples else 0,
+        }, step=e_step_global_step)
+        log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
+        
         # M-step - collect losses
-        prompt_loss = m_step(pθ, new_triples, "prompt", em_iter)
-        rationale_loss = m_step(qφ, new_triples, "rationale", em_iter)
+        prompt_loss = m_step(pθ, new_triples, "prompt", em_iter - 1)  # Convert to 0-indexed for m_step
+        rationale_loss = m_step(qφ, new_triples, "rationale", em_iter - 1)  # Convert to 0-indexed for m_step
+        
+        # Log M-step to wandb
+        m_step_global_step = e_step_global_step + 1
+        wandb.log({
+            "m_step/iteration": em_iter,
+            "m_step/prompt_loss": prompt_loss,
+            "m_step/rationale_loss": rationale_loss,
+            "m_step/combined_loss": prompt_loss + rationale_loss,
+            "m_step/num_triples": len(new_triples),
+        }, step=m_step_global_step)
+        log.info(f"[WANDB] Logged M-step at step {m_step_global_step}: prompt_loss={prompt_loss:.4f}, rationale_loss={rationale_loss:.4f}")
+        
+        # Log overall iteration summary
+        iter_summary_step = m_step_global_step + 1
+        wandb.log({
+            "iteration/num": em_iter,
+            "iteration/total_triples": len(new_triples),
+        }, step=iter_summary_step)
+        log.info(f"[WANDB] Logged iteration {em_iter} complete: {len(new_triples)} triples")
         
         current_triples = new_triples
-        # Save checkpoint after each iteration
+        # Save checkpoint after each iteration (em_iter is 1-indexed)
         save_checkpoint(em_iter, current_triples)
         upload_checkpoint(pθ, qφ, em_iter)
-        
-        # Wandb logging disabled
 
     log.info("DONE!")
+    wandb.finish()
