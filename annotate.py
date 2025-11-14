@@ -323,13 +323,19 @@ def collect_codeforces_problems() -> List[Dict[str, str]]:
     if not codeforces_csv.exists():
         return []
     
+    print("📖 Reading codeforces.csv...")
     bank: List[Dict[str, str]] = []
-    new_cache_entries = 0
     rating_pattern = re.compile(r"\*(\d+)")
+    total_rows = 0
+    high_rating_count = 0
     
     with open(codeforces_csv, "r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row_num, row in enumerate(reader):
+            total_rows += 1
+            if total_rows % 10000 == 0:
+                print(f"  Processed {total_rows} rows, found {high_rating_count} with rating >= 3000...")
+            
             problem_statement = row.get("problem_statement", "").strip()
             if not problem_statement:
                 continue
@@ -340,18 +346,16 @@ def collect_codeforces_problems() -> List[Dict[str, str]]:
                 continue
             
             rating = int(rating_match.group(1))
-            if rating < 2200:
+            if rating < 3000:
                 continue
+            
+            high_rating_count += 1
+            if high_rating_count % 100 == 0:
+                print(f"  Found {high_rating_count} problems with rating >= 3000...")
             
             problem = clean_prompt(problem_statement)
             if not problem:
                 continue
-            
-            was_cached = problem in HARDNESS_CACHE
-            if not is_hard_problem(problem, problem_type="coding"):
-                continue
-            if not was_cached:
-                new_cache_entries += 1
             
             contest = row.get("contest", "")
             problem_name = row.get("problem_name", "")
@@ -363,16 +367,31 @@ def collect_codeforces_problems() -> List[Dict[str, str]]:
                     "source_id": source_id,
                     "problem": problem,
                     "problem_type": "coding",
+                    "rating": rating,  # Store rating for verification
                 }
             )
     
-    if new_cache_entries > 0:
-        save_hardness_cache()
-        print(f"💾 Saved {new_cache_entries} new hardness results to cache")
+    # Verify all problems are >= 3000 and sort by rating (descending - hardest first)
+    if bank:
+        min_rating = min(item["rating"] for item in bank)
+        max_rating = max(item["rating"] for item in bank)
+        avg_rating = sum(item["rating"] for item in bank) / len(bank)
+        print(f"✓ Processed {total_rows} rows, found {high_rating_count} problems with rating >= 3000")
+        print(f"  Rating range: {min_rating} - {max_rating}, average: {avg_rating:.1f}")
+        if min_rating < 3000:
+            raise ValueError(f"ERROR: Found problem with rating {min_rating} < 3000!")
+        
+        # Sort by rating in descending order (hardest first)
+        bank.sort(key=lambda x: x["rating"], reverse=True)
+        print(f"  Sorted by rating (descending): hardest problem has rating {bank[0]['rating']}")
+    else:
+        print(f"✓ Processed {total_rows} rows, found {high_rating_count} problems with rating >= 3000")
+    
     return bank
 
 
 def collect_problem_bank() -> List[Dict[str, str]]:
+    print("📚 Collecting math problems from olympiad files...")
     dataset_paths: List[Path] = []
     if BASE_DIR.exists():
         for candidate in BASE_DIR.rglob("*.jsonl"):
@@ -414,6 +433,7 @@ def collect_problem_bank() -> List[Dict[str, str]]:
                         "problem_type": "math",
                     }
                 )
+    print(f"✓ Collected {len(bank)} math problems")
     if new_cache_entries > 0:
         save_hardness_cache()
         print(f"💾 Saved {new_cache_entries} new hardness results to cache")
@@ -709,13 +729,15 @@ def main() -> None:
                 "source": item["source"],
                 "source_id": item["source_id"],
                 "problem": item["problem"],
-                "solution": item["solution"],
                 "concepts": annotation["concepts"],
                 "rationale": annotation["rationale"],
                 "model": model_cfg["name"],
                 "provider": model_cfg["provider"],
                 "problem_type": problem_type,
             }
+            # Add rating for coding problems
+            if "rating" in item:
+                record["rating"] = item["rating"]
             results.append(record)
             completed_ids.add(item["source_id"])
             processed_count += 1

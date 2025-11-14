@@ -561,9 +561,9 @@ else:
             log.info(f"[E-STEP] Final batch summary: {batch_tiebreaker_used}/{len(batch_c)} actually used tiebreaker ({batch_tiebreaker_used/len(batch_c)*100:.1f}%), {batch_eligible_count} eligible")
             
             # Log batch metrics to wandb
-            global_step = (em_iter * total_batches) + batch_num
+            global_step = ((em_iter - 1) * total_batches) + batch_num
             wandb.log({
-                "batch/iteration": em_iter + 1,
+                "batch/iteration": em_iter,
                 "batch/batch_num": batch_num,
                 "batch/reward_avg_all": avg_reward,
                 "batch/reward_avg_selected": avg_selected_reward,
