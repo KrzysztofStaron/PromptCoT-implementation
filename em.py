@@ -46,7 +46,7 @@ sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure'
 # Both pθ and qφ are initialized from the same base checkpoint
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-14B-Base (scaled-down version)
 # Using QLoRA (4-bit quantization + LoRA) for memory efficiency
-MODEL_NAME = "Qwen/Qwen2.5-14B"  # Base model (no -Instruct suffix)
+MODEL_NAME = "Qwen/Qwen2.5-7B"  # Base model (no -Instruct suffix)
 SEED_FILE = "./data/annotated.jsonl"
 CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 10
