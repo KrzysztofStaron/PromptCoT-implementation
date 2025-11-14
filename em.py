@@ -32,12 +32,12 @@ log = logging.getLogger(__name__)
 # BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
 # Both pθ and qφ are initialized from the same base checkpoint
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-14B-Base (scaled-down version)
-MODEL_NAME = "Qwen/Qwen2.5-7B"  # Base model (no -Instruct suffix)
+MODEL_NAME = "Qwen/Qwen2.5-14B"  # Base model (no -Instruct suffix)
 SEED_FILE = "./data/annotated.jsonl"
 CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 10
-K_SAMPLES = 8
-BATCH_SIZE = 4
+K_SAMPLES = 4
+BATCH_SIZE = 5
 USE_GROQ_TIEBREAKER = True
 
 # Create checkpoint directory if it doesn't exist
