@@ -16,6 +16,7 @@ from datasets import Dataset
 from peft import PeftModel
 import os
 import logging
+import sys
 from huggingface_hub import HfApi, create_repo
 from dotenv import load_dotenv
 from tieBreaker import select_best_rationale
@@ -25,8 +26,18 @@ from hf_config import HF_USERNAME, HF_VERSION, HF_REPO_ID, HF_P_BASE_PATH, HF_Q_
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging with explicit formatting and force flush
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 log = logging.getLogger(__name__)
+
+# Force stdout to be unbuffered
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
 
 # === CONFIG ===
 # BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
@@ -53,7 +64,11 @@ wandb.init(
         "k_samples": K_SAMPLES,
         "batch_size": BATCH_SIZE,
         "use_groq_tiebreaker": USE_GROQ_TIEBREAKER,
-    }
+    },
+    settings=wandb.Settings(
+        _disable_stats=False,
+        _disable_meta=False,
+    )
 )
 
 # === TOKENIZER ===
@@ -396,9 +411,13 @@ else:
             batch_x.append(t["problem"])
             if len(batch_c) == BATCH_SIZE:
                 batch_num += 1
+                log.info(f"\n{'='*80}")
                 log.info(f"[E-STEP] Processing batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
+                log.info(f"{'='*80}")
+                sys.stdout.flush()
                 
                 log.info(f"[E-STEP] Generating {K_SAMPLES} rationale candidates per sample...")
+                sys.stdout.flush()
                 z_cands = batched_e_step(qφ, batch_c, batch_x)
                 log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
                 
@@ -470,9 +489,11 @@ else:
                 
                 log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
                 log.info(f"[E-STEP] Batch {batch_num} summary: {batch_tiebreaker_used}/{len(batch_c)} actually used tiebreaker ({batch_tiebreaker_used/len(batch_c)*100:.1f}%), {batch_eligible_count} eligible")
+                sys.stdout.flush()
                 
                 # Log batch metrics to wandb
                 global_step = ((em_iter - 1) * total_batches) + batch_num
+                log.info(f"[WANDB] Logging batch {batch_num} metrics at step {global_step}")
                 wandb.log({
                     "batch/iteration": em_iter,
                     "batch/batch_num": batch_num,
@@ -488,14 +509,20 @@ else:
                     "batch/reward_spread_max": reward_spread_max,
                     "batch/reward_spread_eligible_count": batch_eligible_count,
                 }, step=global_step)
+                log.info(f"[WANDB] Batch {batch_num} logged successfully")
+                sys.stdout.flush()
                 
                 batch_c, batch_x = [], []
 
         # Process remaining batch if any
         if batch_c:
             batch_num += 1
+            log.info(f"\n{'='*80}")
             log.info(f"[E-STEP] Processing final batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
+            log.info(f"{'='*80}")
+            sys.stdout.flush()
             log.info(f"[E-STEP] Generating {K_SAMPLES} rationale candidates per sample...")
+            sys.stdout.flush()
             z_cands = batched_e_step(qφ, batch_c, batch_x)
             log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
             
@@ -564,9 +591,11 @@ else:
             
             log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
             log.info(f"[E-STEP] Final batch summary: {batch_tiebreaker_used}/{len(batch_c)} actually used tiebreaker ({batch_tiebreaker_used/len(batch_c)*100:.1f}%), {batch_eligible_count} eligible")
+            sys.stdout.flush()
             
             # Log batch metrics to wandb
             global_step = ((em_iter - 1) * total_batches) + batch_num
+            log.info(f"[WANDB] Logging final batch {batch_num} metrics at step {global_step}")
             wandb.log({
                 "batch/iteration": em_iter,
                 "batch/batch_num": batch_num,
@@ -582,6 +611,8 @@ else:
                 "batch/reward_spread_max": reward_spread_max,
                 "batch/reward_spread_eligible_count": batch_eligible_count,
             }, step=global_step)
+            log.info(f"[WANDB] Final batch {batch_num} logged successfully")
+            sys.stdout.flush()
         
         # E-step summary
         if all_rewards:
