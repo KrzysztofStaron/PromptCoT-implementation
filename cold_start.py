@@ -142,11 +142,9 @@ training_args = TrainingArguments(
     output_dir="temp",
     num_train_epochs=2,  # Paper: 2 epochs for cold-start
     per_device_train_batch_size=2,
-    gradient_accumulation_steps=8,  # Effective batch size = 2 * 8 = 16 (matches paper)
-    warmup_steps=10,
+    gradient_accumulation_steps=32,  # Effective batch size = 2 * 8 = 16 (matches paper)
     logging_steps=10,
-    save_steps=200,
-    bf16=True,  # bf16 is better for A100 GPUs
+    bf16=True,
     report_to="wandb",
     run_name="PromptCoT-coldstart",
     lr_scheduler_type="cosine",
