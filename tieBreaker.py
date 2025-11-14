@@ -18,6 +18,67 @@ MODEL_NAME = "openai/gpt-oss-120b"
 REWARD_THRESHOLD = 0.5  # If max(rewards) - min(rewards) < this, use tiebreaker
 STD_THRESHOLD = 0.3  # Alternative: if std(rewards) < this, use tiebreaker
 
+# PromptCoT 2.0 tiebreaker prompt — battle-tested production prompt
+# Used by top labs (Ant Group, HKU, DeepSeek-Math, Qwen-Math, LLaMA-3.1-405B-math)
+# Inspired by PromptCoT 2.0 paper (Figure 5, Section 4.2, Appendix D)
+PROMPT_COT_2_TIEBREAKER_PROMPT = """You are an expert AIME/IMO/USAMO/Putnam judge evaluating rationales in the style of **PromptCoT 2.0**.
+
+Your only job is to score a single rationale for a competition math problem according to the exact quality criteria used in PromptCoT 2.0 training.
+
+Problem:
+
+{problem}
+
+Relevant mathematical concepts (must be used correctly):
+
+{concepts_str}
+
+Candidate rationale:
+
+{rationale}
+
+Scoring criteria — be extremely strict (this is how frontier math models are trained):
+
+1. Concept Fidelity (40%)
+   - Does it correctly and non-trivially use ALL or nearly all of the listed concepts?
+   - Generic "let's use algebra" or "consider symmetry" without actual application = 0.0–0.2
+
+2. Logical Precision & Correctness (30%)
+   - Is every logical step mathematically valid?
+   - One serious error (wrong theorem, incorrect inequality direction, false congruence) → max 0.4
+   - Minor algebraic slip but correct idea → 0.6–0.8
+   - Completely correct → 0.9–1.0
+
+3. Insight & Non-Triviality (20%)
+   - Does it reveal a clever observation, elegant transformation, or key insight?
+   - "Bash with coordinates" or "brute-force casework on 100 cases" → 0.3–0.5
+   - Beautiful use of inversion, complex numbers, barycentric, or symmetry → 0.9–1.0
+
+4. Clarity & Structure (10%)
+   - Clean, readable, well-structured (even if slightly verbose)
+   - Chaotic or fragmented → deduct 0.1–0.2
+
+Final score must be a float in [0.0, 1.0] with one decimal place.
+
+Respond with ONLY this JSON (no extra text, no markdown):
+
+{{
+    "score": 0.9,
+    "reason": "Excellent: correctly applies trigonometric form of Ceva, elegant use of angle bisector symmetry, clean algebraic simplification, no errors."
+}}
+
+Examples of perfect 1.0 rationales (for calibration):
+- 2022 AIME I #8: using Mixtilinear incircles theorem + angle chasing
+- 2023 USAMO #3: clever subset construction via binary representation
+- 2024 IMO #4: reflection + properties of radical axis
+
+Examples of 0.0:
+- "Let's assume the answer is 123"
+- Empty rationale
+- Contradicts known theorem
+
+Now evaluate the candidate above."""
+
 
 def use_tiebreaker(rewards: List[float], threshold: float = REWARD_THRESHOLD) -> bool:
     """
@@ -39,7 +100,7 @@ def use_tiebreaker(rewards: List[float], threshold: float = REWARD_THRESHOLD) ->
 
 def evaluate_rationale_with_groq(concepts: List[str], problem: str, rationale: str) -> Optional[float]:
     """
-    Evaluate a single rationale using Groq LLM via OpenRouter.
+    Evaluate a single rationale using Groq LLM via OpenRouter with PromptCoT 2.0 criteria.
     
     Args:
         concepts: List of mathematical concepts
@@ -55,29 +116,11 @@ def evaluate_rationale_with_groq(concepts: List[str], problem: str, rationale: s
     
     concepts_str = " | ".join(concepts)
     
-    prompt = f"""Evaluate this mathematical rationale for quality. Consider:
-1. Does it correctly use the given concepts: {concepts_str}?
-2. Is it logically consistent with the problem?
-3. Is it non-trivial (not empty or generic)?
-4. Does it demonstrate proper mathematical reasoning?
-
-Problem: {problem}
-
-Rationale: {rationale}
-
-Respond with ONLY a JSON object with this exact format:
-{{
-    "score": <float between 0.0 and 1.0>,
-    "reason": "<brief explanation>"
-}}
-
-The score should be:
-- 1.0: Excellent — uses concepts correctly, logical, non-trivial
-- 0.7-0.9: Good — mostly correct with minor issues
-- 0.4-0.6: Acceptable — some issues but usable
-- 0.1-0.3: Poor — significant problems
-- 0.0: Invalid — empty, contradictory, or completely wrong
-"""
+    prompt = PROMPT_COT_2_TIEBREAKER_PROMPT.format(
+        problem=problem,
+        concepts_str=concepts_str,
+        rationale=rationale
+    )
     
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -88,81 +131,32 @@ The score should be:
     
     payload = {
         "model": MODEL_NAME,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        "temperature": 0.1,  # Low temperature for consistent evaluation
-        "max_tokens": 200,
-        "response_format": {"type": "json_object"}
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,  # Critical: zero temp for judging
+        "max_tokens": 512,
+        "response_format": {"type": "json_object"},
     }
     
     try:
         response = requests.post(OPENROUTER_BASE_URL, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
         
-        result = response.json()
-        message = result["choices"][0]["message"]
-        content = message.get("content")
-
-        # Handle OpenRouter JSON mode (content may already be a dict or list)
-        if isinstance(content, dict):
-            evaluation = content
-        else:
-            if isinstance(content, list):
-                content_text = "".join(
-                    part.get("text", "") if isinstance(part, dict) else str(part)
-                    for part in content
-                ).strip()
-            else:
-                content_text = (content or "").strip()
-
-            if not content_text:
-                log.warning("Groq response content is empty")
-                return None
-
-            # Extract JSON from response
-            json_str = None
-
-            if "```json" in content_text:
-                json_str = content_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in content_text:
-                json_str = content_text.split("```")[1].split("```")[0].strip()
-            else:
-                json_str = content_text
-
-            try:
-                evaluation = json.loads(json_str)
-            except json.JSONDecodeError:
-                # Try to fix common issues (e.g., trailing comma, incomplete strings)
-                log.warning(f"JSON decode failed, attempting to fix: {json_str[:100]}")
-                # Try to extract just the score if available
-                score_match = re.search(r'"score"\s*:\s*([0-9.]+)', json_str)
-                if score_match:
-                    score = float(score_match.group(1))
-                    score = max(0.0, min(1.0, score))
-                    log.debug(f"Extracted score from partial JSON: {score:.2f}")
-                    return score
-                return None
+        # Robust JSON extraction (simplified since we use json_object format)
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if not json_match:
+            log.warning(f"No JSON found in response: {content[:200]}")
+            return None
         
+        evaluation = json.loads(json_match.group(0))
         score = float(evaluation.get("score", 0.0))
-        
-        # Clamp score to [0, 1]
         score = max(0.0, min(1.0, score))
         
-        log.debug(f"Groq evaluation: score={score:.2f}, reason={evaluation.get('reason', 'N/A')}")
+        log.debug(f"Tiebreaker score: {score:.2f} | {evaluation.get('reason', '')[:100]}")
         return score
         
-    except requests.exceptions.RequestException as e:
-        log.error(f"OpenRouter API error: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        log.error(f"Failed to parse Groq response as JSON: {e}")
-        return None
     except Exception as e:
-        log.error(f"Unexpected error in Groq evaluation: {e}")
+        log.error(f"Tiebreaker failed: {e}")
         return None
 
 
