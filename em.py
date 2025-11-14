@@ -384,7 +384,7 @@ else:
         total_batches = (len(current_triples) + BATCH_SIZE - 1) // BATCH_SIZE
         batch_num = 0
         all_rewards = []
-        total_tiebreaker_count = 0
+        total_tiebreaker_used = 0
         
         for t in current_triples:
             batch_c.append(t["concepts"])
@@ -404,19 +404,22 @@ else:
                 log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
                 batch_rewards = []
                 batch_selected_rewards = []
-                batch_tiebreaker_count = 0
+                batch_tiebreaker_used = 0
+                batch_reward_spreads_eligible = []  # Track spreads for eligible cases
+                batch_eligible_count = 0
                 
                 for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
                     rewards = [compute_reward(pθ, c, x, z) for z in z_list]
                     batch_rewards.extend(rewards)
                     
-                    # Track tiebreaker usage
+                    # Track reward spread and eligibility
                     reward_spread = max(rewards) - min(rewards) if rewards else 0
-                    used_tiebreaker = USE_GROQ_TIEBREAKER and reward_spread < 0.5
-                    if used_tiebreaker:
-                        batch_tiebreaker_count += 1
+                    is_eligible = USE_GROQ_TIEBREAKER and reward_spread < 0.5
+                    if is_eligible:
+                        batch_reward_spreads_eligible.append(reward_spread)
+                        batch_eligible_count += 1
                     
-                    best_idx, best_z = select_best_rationale(
+                    best_idx, best_z, tiebreaker_used = select_best_rationale(
                         c,
                         x,
                         z_list,
@@ -424,13 +427,16 @@ else:
                         use_groq=USE_GROQ_TIEBREAKER,
                         iteration=em_iter
                     )
+                    if tiebreaker_used:
+                        batch_tiebreaker_used += 1
+                    
                     selected_reward = rewards[best_idx]
                     batch_selected_rewards.append(selected_reward)
                     all_rewards.append(selected_reward)
                     new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
                     
                     # Log winning rationale details
-                    if used_tiebreaker:
+                    if tiebreaker_used:
                         log.info(f"[WINNER] 🎯 Tiebreaker selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
                         log.info(f"[WINNER] Problem: {x[:100]}..." if len(x) > 100 else f"[WINNER] Problem: {x}")
                         log.info(f"[WINNER] All candidate rewards: {[f'{r:.3f}' for r in rewards]}")
@@ -443,7 +449,7 @@ else:
                     if (i + 1) % 4 == 0:
                         log.info(f"[E-STEP]   Processed {i+1}/{len(batch_c)} samples in batch")
                 
-                total_tiebreaker_count += batch_tiebreaker_count
+                total_tiebreaker_used += batch_tiebreaker_used
                 
                 # Compute batch statistics
                 avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
@@ -452,8 +458,13 @@ else:
                 std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
                 avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
                 
+                # Compute reward spread statistics for eligible cases
+                reward_spread_avg = sum(batch_reward_spreads_eligible) / len(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+                reward_spread_min = min(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+                reward_spread_max = max(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+                
                 log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
-                log.info(f"[E-STEP] Batch {batch_num} summary: {batch_tiebreaker_count}/{len(batch_c)} used tiebreaker ({batch_tiebreaker_count/len(batch_c)*100:.1f}%)")
+                log.info(f"[E-STEP] Batch {batch_num} summary: {batch_tiebreaker_used}/{len(batch_c)} actually used tiebreaker ({batch_tiebreaker_used/len(batch_c)*100:.1f}%), {batch_eligible_count} eligible")
                 
                 # Log batch metrics to wandb
                 global_step = ((em_iter - 1) * total_batches) + batch_num
@@ -466,8 +477,11 @@ else:
                     "batch/reward_min": min_reward,
                     "batch/reward_std": std_reward,
                     "batch/avg_rationale_length": avg_rationale_length,
-                    "batch/tiebreaker_usage": batch_tiebreaker_count,
-                    "batch/samples": len(batch_c),
+                    "batch/tiebreaker_used": batch_tiebreaker_used,
+                    "batch/reward_spread_avg": reward_spread_avg,
+                    "batch/reward_spread_min": reward_spread_min,
+                    "batch/reward_spread_max": reward_spread_max,
+                    "batch/reward_spread_eligible_count": batch_eligible_count,
                 }, step=global_step)
                 
                 batch_c, batch_x = [], []
@@ -487,19 +501,22 @@ else:
             log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
             batch_rewards = []
             batch_selected_rewards = []
-            batch_tiebreaker_count = 0
+            batch_tiebreaker_used = 0
+            batch_reward_spreads_eligible = []  # Track spreads for eligible cases
+            batch_eligible_count = 0
             
             for i, (c, x, z_list) in enumerate(zip(batch_c, batch_x, z_cands)):
                 rewards = [compute_reward(pθ, c, x, z) for z in z_list]
                 batch_rewards.extend(rewards)
                 
-                # Track tiebreaker usage
+                # Track reward spread and eligibility
                 reward_spread = max(rewards) - min(rewards) if rewards else 0
-                used_tiebreaker = USE_GROQ_TIEBREAKER and reward_spread < 0.5
-                if used_tiebreaker:
-                    batch_tiebreaker_count += 1
+                is_eligible = USE_GROQ_TIEBREAKER and reward_spread < 0.5
+                if is_eligible:
+                    batch_reward_spreads_eligible.append(reward_spread)
+                    batch_eligible_count += 1
                 
-                best_idx, best_z = select_best_rationale(
+                best_idx, best_z, tiebreaker_used = select_best_rationale(
                     c,
                     x,
                     z_list,
@@ -507,13 +524,16 @@ else:
                     use_groq=USE_GROQ_TIEBREAKER,
                     iteration=em_iter
                 )
+                if tiebreaker_used:
+                    batch_tiebreaker_used += 1
+                
                 selected_reward = rewards[best_idx]
                 batch_selected_rewards.append(selected_reward)
                 all_rewards.append(selected_reward)
                 new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
                 
                 # Log winning rationale details
-                if used_tiebreaker:
+                if tiebreaker_used:
                     log.info(f"[WINNER] 🎯 Tiebreaker selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
                     log.info(f"[WINNER] Problem: {x[:100]}..." if len(x) > 100 else f"[WINNER] Problem: {x}")
                     log.info(f"[WINNER] All candidate rewards: {[f'{r:.3f}' for r in rewards]}")
@@ -523,7 +543,7 @@ else:
                     log.info(f"[WINNER] Selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
                     log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
             
-            total_tiebreaker_count += batch_tiebreaker_count
+            total_tiebreaker_used += batch_tiebreaker_used
             
             # Compute batch statistics
             avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
@@ -532,8 +552,13 @@ else:
             std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
             avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
             
+            # Compute reward spread statistics for eligible cases
+            reward_spread_avg = sum(batch_reward_spreads_eligible) / len(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+            reward_spread_min = min(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+            reward_spread_max = max(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+            
             log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
-            log.info(f"[E-STEP] Final batch summary: {batch_tiebreaker_count}/{len(batch_c)} used tiebreaker ({batch_tiebreaker_count/len(batch_c)*100:.1f}%)")
+            log.info(f"[E-STEP] Final batch summary: {batch_tiebreaker_used}/{len(batch_c)} actually used tiebreaker ({batch_tiebreaker_used/len(batch_c)*100:.1f}%), {batch_eligible_count} eligible")
             
             # Log batch metrics to wandb
             global_step = (em_iter * total_batches) + batch_num
@@ -546,8 +571,11 @@ else:
                 "batch/reward_min": min_reward,
                 "batch/reward_std": std_reward,
                 "batch/avg_rationale_length": avg_rationale_length,
-                "batch/tiebreaker_usage": batch_tiebreaker_count,
-                "batch/samples": len(batch_c),
+                "batch/tiebreaker_used": batch_tiebreaker_used,
+                "batch/reward_spread_avg": reward_spread_avg,
+                "batch/reward_spread_min": reward_spread_min,
+                "batch/reward_spread_max": reward_spread_max,
+                "batch/reward_spread_eligible_count": batch_eligible_count,
             }, step=global_step)
         
         # E-step summary
@@ -572,9 +600,7 @@ else:
             "e_step/reward_max": max_reward,
             "e_step/reward_min": min_reward,
             "e_step/reward_std": std_reward,
-            "e_step/num_triples": len(new_triples),
-            "e_step/tiebreaker_total": total_tiebreaker_count,
-            "e_step/tiebreaker_percentage": (total_tiebreaker_count / len(new_triples) * 100) if new_triples else 0,
+            "e_step/tiebreaker_used_total": total_tiebreaker_used,
         }, step=e_step_global_step)
         log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
         
@@ -589,7 +615,6 @@ else:
             "m_step/prompt_loss": prompt_loss,
             "m_step/rationale_loss": rationale_loss,
             "m_step/combined_loss": prompt_loss + rationale_loss,
-            "m_step/num_triples": len(new_triples),
             "m_step/prompt_structure_accuracy": prompt_structure_accuracy,
             "m_step/rationale_structure_accuracy": rationale_structure_accuracy,
         }, step=m_step_global_step)
@@ -600,7 +625,6 @@ else:
         iter_summary_step = m_step_global_step + 1
         wandb.log({
             "iteration/num": em_iter,
-            "iteration/total_triples": len(new_triples),
         }, step=iter_summary_step)
         log.info(f"[WANDB] Logged iteration {em_iter} complete: {len(new_triples)} triples")
         

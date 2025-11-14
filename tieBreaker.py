@@ -259,7 +259,7 @@ def select_best_rationale(
     rewards: List[float],
     use_groq: bool = True,
     iteration: Optional[int] = None
-) -> Tuple[int, str]:
+) -> Tuple[int, str, bool]:
     """
     Select best rationale using reward, with optional Groq tiebreaker.
     
@@ -276,7 +276,8 @@ def select_best_rationale(
         iteration: Optional 1-indexed iteration number (for decreasing tiebreaker chance)
     
     Returns:
-        Tuple of (best_index, best_rationale)
+        Tuple of (best_index, best_rationale, tiebreaker_used)
+        tiebreaker_used: True if tiebreaker was actually called, False otherwise
     """
     if len(rationales) != len(rewards):
         raise ValueError(f"rationales ({len(rationales)}) and rewards ({len(rewards)}) must have same length")
@@ -285,7 +286,7 @@ def select_best_rationale(
         raise ValueError("rationales list cannot be empty")
     
     if len(rationales) == 1:
-        return 0, rationales[0]
+        return 0, rationales[0], False
     
     # Check if reward signal is ambiguous
     if use_groq and use_tiebreaker(rewards, REWARD_THRESHOLD):
@@ -294,15 +295,15 @@ def select_best_rationale(
         if random.random() < tiebreaker_chance:
             log.info(f"[SELECT] Reward signal ambiguous (spread={max(rewards)-min(rewards):.3f}), using Groq tiebreaker")
             best_idx = break_tie_with_groq(concepts, problem, rationales, rewards)
-            return best_idx, rationales[best_idx]
+            return best_idx, rationales[best_idx], True
         else:
             # Fall back to reward-based selection (99% of ambiguous cases)
             best_idx = rewards.index(max(rewards))
             log.debug(f"[SELECT] Reward ambiguous but skipping tiebreaker (1% sampling), using reward: idx={best_idx}, reward={rewards[best_idx]:.3f}")
-            return best_idx, rationales[best_idx]
+            return best_idx, rationales[best_idx], False
     else:
         # Use reward-based selection
         best_idx = rewards.index(max(rewards))
         log.debug(f"[SELECT] Using reward-based selection: idx={best_idx}, reward={rewards[best_idx]:.3f}")
-        return best_idx, rationales[best_idx]
+        return best_idx, rationales[best_idx], False
 
