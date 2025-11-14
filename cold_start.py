@@ -31,6 +31,7 @@ import os
 import torch
 from dotenv import load_dotenv
 import wandb
+from trl import SFTTrainer
 from hf_config import HF_USERNAME, HF_VERSION, HF_TAGS, HF_REPO_ID, HF_P_BASE_PATH, HF_Q_BASE_PATH
 
 # Unsloth for H200 max performance (450+ TFLOPS)
@@ -248,7 +249,7 @@ def train_and_save(texts, path, repo_name, model_description):
     )
     
     # Get Unsloth trainer (packing enabled for massive speedup)
-    trainer = FastLanguageModel.get_trainer(
+    trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset,
