@@ -213,8 +213,7 @@ def upload_to_hf(folder_path, repo_name, tags=None):
         repo_id=HF_REPO_ID,
         token=HF_TOKEN,
         repo_type="model",
-        exist_ok=True,
-        tags=tags if tags else None
+        exist_ok=True
     )
     
     # Build path_in_repo: <model_type>/<HF_VERSION>/cold-start/
