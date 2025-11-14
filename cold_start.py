@@ -39,7 +39,7 @@ wandb.init(project="PromptCoT-coldstart")
 # BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
 # Base models provide high entropy, diversity, and non-deterministic exploration needed for EM
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-14B-Base (scaled-down version)
-MODEL_NAME = "Qwen/Qwen2.5-14B"  # Base model (no -Instruct suffix)
+MODEL_NAME = "Qwen/Qwen2.5-7B"  # Base model (no -Instruct suffix)
 SEED_FILE = "./data/annotated.jsonl"
 OUTPUT_DIR_P = "./models/prompt_model"  # pθ: joint generator p(z,x|c)
 OUTPUT_DIR_Q = "./models/rationale_model"  # qϕ: rationale generator q(z|c,x)
@@ -183,7 +183,7 @@ def compute_structure_accuracy(model, tokenizer, seed_data, model_type="prompt",
             # Generate
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=512,
+                max_new_tokens=1024,
                 do_sample=True,
                 temperature=0.7,
                 top_p=0.9,

@@ -32,12 +32,12 @@ log = logging.getLogger(__name__)
 # BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
 # Both pθ and qφ are initialized from the same base checkpoint
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-14B-Base (scaled-down version)
-MODEL_NAME = "Qwen/Qwen2.5-14B"  # Base model (no -Instruct suffix)
+MODEL_NAME = "Qwen/Qwen2.5-7B"  # Base model (no -Instruct suffix)
 SEED_FILE = "./data/annotated.jsonl"
 CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 10
 K_SAMPLES = 8
-BATCH_SIZE = 16
+BATCH_SIZE = 4
 USE_GROQ_TIEBREAKER = True
 
 # Create checkpoint directory if it doesn't exist
@@ -201,15 +201,15 @@ def compute_reward(pθ, c, x, z):
 # === BATCHED E-STEP (FIXED) ===
 def batched_e_step(qφ, batch_c, batch_x):
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
-    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(qφ.device)
+    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True).to(qφ.device)
 
     qφ.eval()
     with torch.no_grad():
         outputs = qφ.generate(
             **inputs,
-            max_new_tokens=64,
+            max_new_tokens=1024,
             do_sample=True,
-            temperature=0.7,
+            temperature=0.8,
             top_p=0.9,
             num_return_sequences=K_SAMPLES,
             pad_token_id=tokenizer.eos_token_id,
@@ -267,7 +267,7 @@ def compute_structure_accuracy(model, tokenizer, triples, model_type="prompt", s
             # Generate
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=512,
+                max_new_tokens=1024,
                 do_sample=True,
                 temperature=0.7,
                 top_p=0.9,
@@ -308,7 +308,7 @@ def m_step(model, triples, mode, em_iter_0_indexed):
         texts.append({"text": text})
     
     log.info("Creating dataset...")
-    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=512), batched=True)
+    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True), batched=True)
     log.info("Dataset ready. Starting training...")
 
     data_collator = DataCollatorForLanguageModeling(
