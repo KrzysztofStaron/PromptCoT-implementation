@@ -15,7 +15,7 @@ import json
 import torch
 import gc
 from unsloth import FastLanguageModel, is_bfloat16_supported
-from transformers import TrainingArguments, DataCollatorForLanguageModeling
+from transformers import TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
 from datasets import Dataset
 from trl import SFTTrainer
 import os
@@ -444,6 +444,28 @@ def m_step_dual(p_model, q_model, triples, em_iter_1_indexed):
         packing=True,                            # ← CRITICAL: packs short examples for efficiency
         dataset_num_proc=16,
     )
+    
+    class TrainerProgressLogger(TrainerCallback):
+        def __init__(self, log_every=5):
+            self.log_every = log_every
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            if not logs:
+                return
+            if state.global_step is None:
+                return
+            if state.global_step % self.log_every != 0:
+                return
+            loss = logs.get("loss")
+            lr = logs.get("learning_rate")
+            msg = f"[M-STEP UNSLOTH] step {int(state.global_step)}"
+            if loss is not None:
+                msg += f" | loss: {loss:.4f}"
+            if lr is not None:
+                msg += f" | lr: {lr:.2e}"
+            log.info(msg)
+
+    trainer.add_callback(TrainerProgressLogger(log_every=5))
     
     # Train both models simultaneously
     log.info("[M-STEP UNSLOTH] Starting dual training...")
