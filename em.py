@@ -207,7 +207,12 @@ if latest_iter_check is not None:
     p_local_path = os.path.join(CHECKPOINT_DIR, f"p_iter_{latest_iter_check}")
     q_local_path = os.path.join(CHECKPOINT_DIR, f"q_iter_{latest_iter_check}")
     
-    if os.path.exists(p_local_path) and os.path.exists(q_local_path):
+    # Verify that checkpoint directories contain valid adapter files
+    p_adapter_config = os.path.join(p_local_path, "adapter_config.json")
+    q_adapter_config = os.path.join(q_local_path, "adapter_config.json")
+    
+    if (os.path.exists(p_local_path) and os.path.exists(q_local_path) and
+        os.path.exists(p_adapter_config) and os.path.exists(q_adapter_config)):
         log.info(f"Loading pθ adapters from local checkpoint iter_{latest_iter_check}...")
         pθ = PeftModel.from_pretrained(
             base_p,
@@ -228,6 +233,10 @@ if latest_iter_check is not None:
             is_trainable=True,
         )
     else:
+        if os.path.exists(p_local_path) or os.path.exists(q_local_path):
+            log.warning(f"Local checkpoint directories found but missing adapter_config.json files. Falling back to HuggingFace.")
+        else:
+            log.info(f"No local checkpoint found for iter_{latest_iter_check}. Loading from HuggingFace.")
         log.info(f"Loading pθ adapters from {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
         pθ = PeftModel.from_pretrained(
             base_p,
