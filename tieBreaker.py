@@ -166,7 +166,6 @@ def evaluate_rationale_with_groq(concepts: List[str], problem: str, rationale: s
         "model": MODEL_NAME,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,  # Critical: zero temp for judging
-        "max_tokens": 512,
         "response_format": {"type": "json_object"},
     }
     
