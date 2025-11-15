@@ -19,6 +19,7 @@ import logging
 import tempfile
 import threading
 import sys
+import shutil
 from huggingface_hub import HfApi, create_repo
 from dotenv import load_dotenv
 from tieBreaker import select_best_rationale
@@ -88,41 +89,6 @@ tokenizer = AutoTokenizer.from_pretrained(
     truncation_side='left'
 )
 tokenizer.pad_token = tokenizer.eos_token
-
-# === MODELS ===
-log.info("Loading base model for pθ...")
-base_p = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    torch_dtype=torch.bfloat16,
-    device_map="auto",
-    trust_remote_code=True
-)
-
-log.info(f"Loading pθ adapters from {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
-pθ = PeftModel.from_pretrained(
-    base_p,
-    HF_REPO_ID,
-    is_trainable=True,
-    subfolder=PROMPT_INIT_SUBPATH,
-    token=HF_TOKEN,
-)
-
-log.info("Loading base model for qφ...")
-base_q = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    torch_dtype=torch.bfloat16,
-    device_map="auto",
-    trust_remote_code=True
-)
-
-log.info(f"Loading qφ adapters from {HF_REPO_ID}/{RATIONALE_INIT_SUBPATH}...")
-qφ = PeftModel.from_pretrained(
-    base_q,
-    HF_REPO_ID,
-    is_trainable=True,
-    subfolder=RATIONALE_INIT_SUBPATH,
-    token=HF_TOKEN,
-)
 
 # === CHECKPOINT MANAGEMENT ===
 def find_latest_checkpoint():
@@ -225,6 +191,90 @@ def save_checkpoint(iter_num, triples, incomplete=False):
         for triple in triples:
             f.write(json.dumps(triple) + '\n')
     log.info(f"Saved checkpoint: {checkpoint_file} ({len(triples)} triples)")
+
+# === MODELS ===
+log.info("Loading base model for pθ...")
+base_p = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True
+)
+
+# Check for latest local model checkpoint first
+latest_iter_check, is_incomplete_check = find_latest_checkpoint()
+if latest_iter_check is not None:
+    p_local_path = os.path.join(CHECKPOINT_DIR, f"p_iter_{latest_iter_check}")
+    q_local_path = os.path.join(CHECKPOINT_DIR, f"q_iter_{latest_iter_check}")
+    
+    if os.path.exists(p_local_path) and os.path.exists(q_local_path):
+        log.info(f"Loading pθ adapters from local checkpoint iter_{latest_iter_check}...")
+        pθ = PeftModel.from_pretrained(
+            base_p,
+            p_local_path,
+            is_trainable=True,
+        )
+        log.info("Loading base model for qφ...")
+        base_q = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True
+        )
+        log.info(f"Loading qφ adapters from local checkpoint iter_{latest_iter_check}...")
+        qφ = PeftModel.from_pretrained(
+            base_q,
+            q_local_path,
+            is_trainable=True,
+        )
+    else:
+        log.info(f"Loading pθ adapters from {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
+        pθ = PeftModel.from_pretrained(
+            base_p,
+            HF_REPO_ID,
+            is_trainable=True,
+            subfolder=PROMPT_INIT_SUBPATH,
+            token=HF_TOKEN,
+        )
+        log.info("Loading base model for qφ...")
+        base_q = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True
+        )
+        log.info(f"Loading qφ adapters from {HF_REPO_ID}/{RATIONALE_INIT_SUBPATH}...")
+        qφ = PeftModel.from_pretrained(
+            base_q,
+            HF_REPO_ID,
+            is_trainable=True,
+            subfolder=RATIONALE_INIT_SUBPATH,
+            token=HF_TOKEN,
+        )
+else:
+    log.info(f"Loading pθ adapters from {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
+    pθ = PeftModel.from_pretrained(
+        base_p,
+        HF_REPO_ID,
+        is_trainable=True,
+        subfolder=PROMPT_INIT_SUBPATH,
+        token=HF_TOKEN,
+    )
+    log.info("Loading base model for qφ...")
+    base_q = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True
+    )
+    log.info(f"Loading qφ adapters from {HF_REPO_ID}/{RATIONALE_INIT_SUBPATH}...")
+    qφ = PeftModel.from_pretrained(
+        base_q,
+        HF_REPO_ID,
+        is_trainable=True,
+        subfolder=RATIONALE_INIT_SUBPATH,
+        token=HF_TOKEN,
+    )
 
 # === LOAD DATA (from checkpoint or seed) ===
 # Note: All iterations are 1-indexed (iter_1, iter_2, etc.)
@@ -440,6 +490,58 @@ def m_step(model, triples, mode, em_iter_0_indexed):
     
     return final_loss, structure_accuracy
 
+# === MODEL STATE SAVING ===
+def save_model_state(pθ, qφ, iter_num):
+    """Save model adapters locally for resuming training"""
+    p_dir = os.path.join(CHECKPOINT_DIR, f"p_iter_{iter_num}")
+    q_dir = os.path.join(CHECKPOINT_DIR, f"q_iter_{iter_num}")
+    
+    os.makedirs(p_dir, exist_ok=True)
+    os.makedirs(q_dir, exist_ok=True)
+    
+    pθ.save_pretrained(p_dir)
+    qφ.save_pretrained(q_dir)
+    log.info(f"Saved model state for iteration {iter_num}")
+
+# === CHECKPOINT CLEANUP ===
+def cleanup_old_checkpoints(current_iter):
+    """Remove checkpoints older than current_iter - 1 (keep current and previous)"""
+    if not os.path.exists(CHECKPOINT_DIR):
+        return
+    
+    files_to_remove = []
+    for f in os.listdir(CHECKPOINT_DIR):
+        # Check for data checkpoints
+        if f.startswith("iter_") and f.endswith("_triples.jsonl"):
+            try:
+                iter_num = int(f.split("_")[1])
+                if iter_num < current_iter - 1:
+                    files_to_remove.append(os.path.join(CHECKPOINT_DIR, f))
+            except (ValueError, IndexError):
+                continue
+        
+        # Check for model checkpoints
+        if f.startswith("p_iter_") or f.startswith("q_iter_"):
+            try:
+                iter_num = int(f.split("_")[2])
+                if iter_num < current_iter - 1:
+                    dir_path = os.path.join(CHECKPOINT_DIR, f)
+                    if os.path.isdir(dir_path):
+                        files_to_remove.append(dir_path)
+            except (ValueError, IndexError):
+                continue
+    
+    for path in files_to_remove:
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+                log.debug(f"Removed old checkpoint directory: {path}")
+            else:
+                os.remove(path)
+                log.debug(f"Removed old checkpoint file: {path}")
+        except Exception as e:
+            log.warning(f"Failed to remove {path}: {e}")
+
 # === HF UPLOAD (2 REPOS) ===
 def upload_checkpoint(pθ, qφ, iter_num):
     if not HF_TOKEN:
@@ -474,6 +576,8 @@ else:
             log.info(f"Shutdown detected at start of iteration {em_iter}. Saving checkpoint...")
             # Save current state (from previous iteration, which was completed)
             save_checkpoint(em_iter - 1, current_triples, incomplete=False)
+            save_model_state(pθ, qφ, em_iter - 1)
+            cleanup_old_checkpoints(em_iter - 1)
             log.info("Checkpoint saved. Exiting gracefully.")
             break
         
@@ -497,8 +601,12 @@ else:
                 # Save partial new_triples if we have any (incomplete), otherwise save current_triples (completed)
                 if new_triples:
                     save_checkpoint(em_iter, new_triples, incomplete=True)
+                    save_model_state(pθ, qφ, em_iter)
+                    cleanup_old_checkpoints(em_iter)
                 else:
                     save_checkpoint(em_iter - 1, current_triples, incomplete=False)
+                    save_model_state(pθ, qφ, em_iter - 1)
+                    cleanup_old_checkpoints(em_iter - 1)
                 log.info("Checkpoint saved. Exiting gracefully.")
                 break
             batch_c.append(t["concepts"])
@@ -569,8 +677,12 @@ else:
                     log.info(f"Shutdown detected after batch {batch_num} of iteration {em_iter}. Saving partial progress...")
                     if new_triples:
                         save_checkpoint(em_iter, new_triples, incomplete=True)
+                        save_model_state(pθ, qφ, em_iter)
+                        cleanup_old_checkpoints(em_iter)
                     else:
                         save_checkpoint(em_iter - 1, current_triples, incomplete=False)
+                        save_model_state(pθ, qφ, em_iter - 1)
+                        cleanup_old_checkpoints(em_iter - 1)
                     log.info("Checkpoint saved. Exiting gracefully.")
                     break
 
@@ -641,8 +753,12 @@ else:
                 log.info(f"Shutdown detected after final batch of iteration {em_iter}. Saving progress...")
                 if new_triples:
                     save_checkpoint(em_iter, new_triples, incomplete=True)
+                    save_model_state(pθ, qφ, em_iter)
+                    cleanup_old_checkpoints(em_iter)
                 else:
                     save_checkpoint(em_iter - 1, current_triples, incomplete=False)
+                    save_model_state(pθ, qφ, em_iter - 1)
+                    cleanup_old_checkpoints(em_iter - 1)
                 log.info("Checkpoint saved. Exiting gracefully.")
                 break
         
@@ -650,6 +766,8 @@ else:
         if shutdown_event.is_set():
             log.info(f"Shutdown detected after E-step of iteration {em_iter}. Saving progress...")
             save_checkpoint(em_iter, new_triples, incomplete=True)
+            save_model_state(pθ, qφ, em_iter)
+            cleanup_old_checkpoints(em_iter)
             log.info("Checkpoint saved. Exiting gracefully.")
             break
         
@@ -666,6 +784,8 @@ else:
             log.info(f"Shutdown detected after M-step of iteration {em_iter}. Saving checkpoint...")
             current_triples = new_triples
             save_checkpoint(em_iter, current_triples, incomplete=False)
+            save_model_state(pθ, qφ, em_iter)
+            cleanup_old_checkpoints(em_iter)
             log.info("Checkpoint saved. Exiting gracefully.")
             break
         
@@ -680,6 +800,8 @@ else:
         current_triples = new_triples
         # Save checkpoint after each iteration (em_iter is 1-indexed)
         save_checkpoint(em_iter, current_triples)
+        save_model_state(pθ, qφ, em_iter)
+        cleanup_old_checkpoints(em_iter)
         upload_checkpoint(pθ, qφ, em_iter)
 
     if shutdown_event.is_set():
