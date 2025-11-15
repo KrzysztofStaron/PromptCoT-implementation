@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL_NAME = "openai/gpt-oss-120b"
-REWARD_THRESHOLD = 0.5  # If max(rewards) - min(rewards) < this, use tiebreaker
+REWARD_THRESHOLD = 0.3  # If max(rewards) - min(rewards) < this, use tiebreaker
 STD_THRESHOLD = 0.3  # Alternative: if std(rewards) < this, use tiebreaker
 TIEBREAKER_CHANCE = 0.015  # Default probability (deprecated, use get_tiebreaker_chance instead)
 
