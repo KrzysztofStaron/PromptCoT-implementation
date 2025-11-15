@@ -49,3 +49,10 @@ tb_logs/
 data\base\math_problems.jsonl
 data\hardness_cache.json
 init_secret.sh
+
+# EM checkpoints / iteration artifacts
+checkpoints/
+iter_*_triples.jsonl
+iter_*_incomplete_triples.jsonl
+temp_p_iter*/
+temp_q_iter*/
