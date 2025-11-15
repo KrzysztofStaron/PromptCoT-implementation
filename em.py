@@ -47,7 +47,7 @@ EM_ITERS = 6
 MAX_K_SAMPLES = 8
 MIN_K_SAMPLES = 4
 BATCH_SIZE = 16
-USE_GROQ_TIEBREAKER = True
+USE_GROQ_TIEBREAKER = False
 GRADIENT_ACCUMULATION_STEPS = 8  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps
 
 # === SAMPLING SCHEDULE ===
