@@ -11,10 +11,9 @@
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
 import json
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
 from datasets import Dataset
 from peft import PeftModel
-from unsloth import FastLanguageModel
-from trl import SFTTrainer
 import os
 import logging
 import tempfile
@@ -31,8 +30,6 @@ from em_logging import (
     log_m_step_summary, log_iteration_summary, log_winner_rationale,
     log_batch_start, log_batch_generation_complete, log_e_step_progress
 )
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
-
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -209,15 +206,8 @@ latest_iter_check, is_incomplete_check = find_latest_checkpoint()
 if latest_iter_check is not None:
     p_local_path = os.path.join(CHECKPOINT_DIR, f"p_iter_{latest_iter_check}")
     q_local_path = os.path.join(CHECKPOINT_DIR, f"q_iter_{latest_iter_check}")
-    p_adapter_config = os.path.join(p_local_path, "adapter_config.json")
-    q_adapter_config = os.path.join(q_local_path, "adapter_config.json")
     
-    if (
-        os.path.isdir(p_local_path)
-        and os.path.isdir(q_local_path)
-        and os.path.exists(p_adapter_config)
-        and os.path.exists(q_adapter_config)
-    ):
+    if os.path.exists(p_local_path) and os.path.exists(q_local_path):
         log.info(f"Loading pθ adapters from local checkpoint iter_{latest_iter_check}...")
         pθ = PeftModel.from_pretrained(
             base_p,
@@ -237,9 +227,6 @@ if latest_iter_check is not None:
             q_local_path,
             is_trainable=True,
         )
-        # Enable Unsloth optimizations for inference
-        FastLanguageModel.for_inference(pθ)
-        FastLanguageModel.for_inference(qφ)
     else:
         log.info(f"Loading pθ adapters from {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
         pθ = PeftModel.from_pretrained(
@@ -264,9 +251,6 @@ if latest_iter_check is not None:
             subfolder=RATIONALE_INIT_SUBPATH,
             token=HF_TOKEN,
         )
-        # Enable Unsloth optimizations for inference
-        FastLanguageModel.for_inference(pθ)
-        FastLanguageModel.for_inference(qφ)
 else:
     log.info(f"Loading pθ adapters from {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
     pθ = PeftModel.from_pretrained(
@@ -291,10 +275,6 @@ else:
         subfolder=RATIONALE_INIT_SUBPATH,
         token=HF_TOKEN,
     )
-    
-    # Enable Unsloth optimizations for inference
-    FastLanguageModel.for_inference(pθ)
-    FastLanguageModel.for_inference(qφ)
 
 # === LOAD DATA (from checkpoint or seed) ===
 # Note: All iterations are 1-indexed (iter_1, iter_2, etc.)
@@ -371,13 +351,13 @@ def compute_reward(pθ, c, x, z):
 # === BATCHED E-STEP (FIXED) ===
 def batched_e_step(qφ, batch_c, batch_x, num_samples):
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
-    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=1024).to(qφ.device)
+    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(qφ.device)
 
     qφ.eval()
     with torch.no_grad():
         outputs = qφ.generate(
             **inputs,
-            max_new_tokens=1024,
+            max_new_tokens=512,
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
@@ -437,7 +417,7 @@ def compute_structure_accuracy(model, tokenizer, triples, model_type="prompt", s
             # Generate
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=1024,
+                max_new_tokens=512,
                 do_sample=True,
                 temperature=0.7,
                 top_p=0.9,
@@ -460,54 +440,45 @@ def compute_structure_accuracy(model, tokenizer, triples, model_type="prompt", s
 # === M-STEP ===
 def m_step(model, triples, mode, em_iter_0_indexed):
     """
-    M-step training using Unsloth for optimized performance.
+    M-step training.
     
     Args:
-        model: The PEFT model to train
+        model: The model to train
         triples: Training triples
         mode: "prompt" or "rationale"
         em_iter_0_indexed: 0-indexed iteration number (for backward compatibility with TrainingArguments)
     """
     log.info(f"Starting M-step for {mode} model with {len(triples)} triples")
-    
-    # Enable Unsloth optimizations on the model
-    FastLanguageModel.for_training(model)
-    
     texts = []
     for t in triples:
         text = f"Concepts: {' | '.join(t['concepts'])}\nRationale: {t['rationale']}\nProblem: {t['problem']}" if mode == "prompt" else \
                f"Concepts: {' | '.join(t['concepts'])}\nProblem: {t['problem']}\nRationale: {t['rationale']}"
         texts.append({"text": text})
     
-    ds = Dataset.from_list(texts)
+    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=512), batched=True)
 
-    trainer = SFTTrainer(
-        model=model,
+    data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
-        train_dataset=ds,
-        dataset_text_field="text",
-        max_seq_length=1024,
-        dataset_num_proc=16,
-        packing=True,  # Pack short examples for massive speedup
+        mlm=False
+    )
+
+    trainer = Trainer(
+        model=model,
         args=TrainingArguments(
             output_dir="temp",
             per_device_train_batch_size=2,
             gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
             num_train_epochs=1,
             bf16=True,
-            optim="adamw_8bit",
             report_to="none",  # Disable auto-logging, we log manually
             logging_steps=10,
             log_level="info",
-            run_name=f"m_step_{mode}_iter{em_iter_0_indexed+1}",
-            torch_compile=True,  # +25% speed boost
-            dataloader_num_workers=16,
+            run_name=f"m_step_{mode}_iter{em_iter_0_indexed+1}"
         ),
+        train_dataset=ds,
+        data_collator=data_collator
     )
     train_result = trainer.train()
-    
-    # Re-enable inference mode after training
-    FastLanguageModel.for_inference(model)
     
     # Compute structure accuracy after training
     #structure_accuracy = compute_structure_accuracy(model, tokenizer, triples, model_type=mode, sample_size=5)
