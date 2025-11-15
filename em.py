@@ -11,7 +11,7 @@
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
 import json
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback, BitsAndBytesConfig
 from datasets import Dataset
 from peft import PeftModel
 import os
@@ -133,10 +133,18 @@ def find_latest_iteration_from_hf():
         return None
 
 # === MODELS ===
-log.info("Loading base model for pθ...")
+# Load base model with 4-bit quantization to match cold-start training
+# This ensures compatibility with adapters trained with Unsloth (which uses 4-bit quantization)
+log.info("Loading base model for pθ (4-bit quantized for compatibility with cold-start models)...")
+quantization_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_quant_type="nf4"
+)
 base_p = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
-    torch_dtype=torch.bfloat16,
+    quantization_config=quantization_config,
     device_map="auto",
     trust_remote_code=True
 )
@@ -155,10 +163,10 @@ if latest_iter_hf is not None:
         subfolder=p_latest_path.rstrip("/"),
         token=HF_TOKEN,
     )
-    log.info("Loading base model for qφ...")
+    log.info("Loading base model for qφ (4-bit quantized for compatibility with cold-start models)...")
     base_q = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        torch_dtype=torch.bfloat16,
+        quantization_config=quantization_config,
         device_map="auto",
         trust_remote_code=True
     )
@@ -186,10 +194,10 @@ else:
         log.error("Make sure cold-start models have been uploaded to HuggingFace first!")
         raise
     
-    log.info("Loading base model for qφ...")
+    log.info("Loading base model for qφ (4-bit quantized for compatibility with cold-start models)...")
     base_q = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        torch_dtype=torch.bfloat16,
+        quantization_config=quantization_config,
         device_map="auto",
         trust_remote_code=True
     )
