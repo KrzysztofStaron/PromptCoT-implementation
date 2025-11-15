@@ -48,3 +48,4 @@ tb_logs/
 
 data\base\math_problems.jsonl
 data\hardness_cache.json
+init_secret.sh
