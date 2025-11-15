@@ -18,14 +18,14 @@ def log_batch_metrics(em_iter, batch_num, total_batches, batch_rewards, batch_se
     else:
         avg_reward = max_reward = min_reward = 0.0
     
-    global_step = ((em_iter - 1) * total_batches) + batch_num
+    # Let wandb auto-increment steps to avoid conflicts when resuming
     wandb.log({
         "batch/iteration": em_iter,
         "batch/batch_num": batch_num,
         "batch/reward_min": min_reward,
         "batch/reward_avg": avg_reward,
         "batch/reward_max": max_reward,
-    }, step=global_step)
+    })
     
     log.info(f"[E-STEP] Batch {batch_num} complete. Reward - Min: {min_reward:.2f}, Avg: {avg_reward:.2f}, Max: {max_reward:.2f}")
 
@@ -40,14 +40,14 @@ def log_final_batch_metrics(em_iter, batch_num, total_batches, batch_rewards, ba
     else:
         avg_reward = max_reward = min_reward = 0.0
     
-    global_step = (em_iter * total_batches) + batch_num
+    # Let wandb auto-increment steps to avoid conflicts when resuming
     wandb.log({
-        "batch/iteration": em_iter + 1,
+        "batch/iteration": em_iter,
         "batch/batch_num": batch_num,
         "batch/reward_min": min_reward,
         "batch/reward_avg": avg_reward,
         "batch/reward_max": max_reward,
-    }, step=global_step)
+    })
     
     log.info(f"[E-STEP] Final batch complete. Reward - Min: {min_reward:.2f}, Avg: {avg_reward:.2f}, Max: {max_reward:.2f}")
 
@@ -62,14 +62,14 @@ def log_e_step_summary(em_iter, total_batches, all_rewards, total_tiebreaker_use
     else:
         avg_reward = max_reward = min_reward = 0.0
     
-    e_step_global_step = ((em_iter - 1) * total_batches) + total_batches
+    # Let wandb auto-increment steps to avoid conflicts when resuming
     wandb.log({
         "e_step/iteration": em_iter,
         "e_step/reward_min": min_reward,
         "e_step/reward_avg": avg_reward,
         "e_step/reward_max": max_reward,
-    }, step=e_step_global_step)
-    log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_min={min_reward:.2f}, reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
+    })
+    log.info(f"[WANDB] Logged E-step summary for iteration {em_iter}: reward_min={min_reward:.2f}, reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
 
 def log_m_step_summary(em_iter, e_step_global_step, prompt_loss, rationale_loss, 
                        prompt_structure_accuracy, rationale_structure_accuracy):
@@ -79,21 +79,21 @@ def log_m_step_summary(em_iter, e_step_global_step, prompt_loss, rationale_loss,
     avg_loss = sum(losses) / len(losses)
     max_loss = max(losses)
     
-    m_step_global_step = e_step_global_step + 1
+    # Let wandb auto-increment steps to avoid conflicts when resuming
     wandb.log({
         "m_step/iteration": em_iter,
         "m_step/loss_min": min_loss,
         "m_step/loss_avg": avg_loss,
         "m_step/loss_max": max_loss,
-    }, step=m_step_global_step)
-    log.info(f"[WANDB] Logged M-step at step {m_step_global_step}: Loss - Min: {min_loss:.4f}, Avg: {avg_loss:.4f}, Max: {max_loss:.4f}")
+    })
+    log.info(f"[WANDB] Logged M-step for iteration {em_iter}: Loss - Min: {min_loss:.4f}, Avg: {avg_loss:.4f}, Max: {max_loss:.4f}")
 
 def log_iteration_summary(em_iter, m_step_global_step, num_triples):
     """Log iteration summary to wandb"""
-    iter_summary_step = m_step_global_step + 1
+    # Let wandb auto-increment steps to avoid conflicts when resuming
     wandb.log({
         "iteration/num": em_iter,
-    }, step=iter_summary_step)
+    })
     log.info(f"[WANDB] Logged iteration {em_iter} complete: {num_triples} triples")
 
 # === VERBOSE LOGGING HELPERS ===

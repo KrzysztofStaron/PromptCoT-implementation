@@ -306,7 +306,7 @@ def batched_e_step(qφ, batch_c, batch_x, num_samples):
         raise ImmediateShutdown("Shutdown requested before generation")
     
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
-    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(qφ.device)
+    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=1024).to(qφ.device)
 
     qφ.eval()
     with torch.no_grad():
@@ -316,7 +316,7 @@ def batched_e_step(qφ, batch_c, batch_x, num_samples):
         
         outputs = qφ.generate(
             **inputs,
-            max_new_tokens=512,
+            max_new_tokens=1024,
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
@@ -417,7 +417,7 @@ def m_step(model, triples, mode, em_iter_0_indexed):
                f"Concepts: {' | '.join(t['concepts'])}\nProblem: {t['problem']}\nRationale: {t['rationale']}"
         texts.append({"text": text})
     
-    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=512), batched=True)
+    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=1024), batched=True)
 
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
@@ -672,7 +672,6 @@ else:
                 log.warning(f"WARNING: E-step produced {len(new_triples)} triples but input had {len(current_triples)} triples!")
             
             # E-step summary
-            e_step_global_step = ((em_iter - 1) * total_batches) + total_batches
             log_e_step_summary(em_iter, total_batches, all_rewards, total_tiebreaker_used)
             
             # M-step - collect losses and structure accuracies
@@ -684,12 +683,11 @@ else:
                 raise ImmediateShutdown(f"Shutdown requested after M-step of iteration {em_iter}")
             
             # Log M-step to wandb
-            log_m_step_summary(em_iter, e_step_global_step, prompt_loss, rationale_loss,
+            log_m_step_summary(em_iter, 0, prompt_loss, rationale_loss,
                               prompt_structure_accuracy, rationale_structure_accuracy)
             
             # Log overall iteration summary
-            m_step_global_step = e_step_global_step + 1
-            log_iteration_summary(em_iter, m_step_global_step, len(new_triples))
+            log_iteration_summary(em_iter, 0, len(new_triples))
             
             current_triples = new_triples
             # Upload to HuggingFace after each iteration (em_iter is 1-indexed)
