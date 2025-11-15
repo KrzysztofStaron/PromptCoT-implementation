@@ -209,8 +209,15 @@ latest_iter_check, is_incomplete_check = find_latest_checkpoint()
 if latest_iter_check is not None:
     p_local_path = os.path.join(CHECKPOINT_DIR, f"p_iter_{latest_iter_check}")
     q_local_path = os.path.join(CHECKPOINT_DIR, f"q_iter_{latest_iter_check}")
+    p_adapter_config = os.path.join(p_local_path, "adapter_config.json")
+    q_adapter_config = os.path.join(q_local_path, "adapter_config.json")
     
-    if os.path.exists(p_local_path) and os.path.exists(q_local_path):
+    if (
+        os.path.isdir(p_local_path)
+        and os.path.isdir(q_local_path)
+        and os.path.exists(p_adapter_config)
+        and os.path.exists(q_adapter_config)
+    ):
         log.info(f"Loading pθ adapters from local checkpoint iter_{latest_iter_check}...")
         pθ = PeftModel.from_pretrained(
             base_p,
