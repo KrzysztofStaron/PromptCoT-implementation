@@ -11,7 +11,6 @@
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
 import json
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
 from datasets import Dataset
 from peft import PeftModel
 from unsloth import FastLanguageModel
@@ -32,6 +31,8 @@ from em_logging import (
     log_m_step_summary, log_iteration_summary, log_winner_rationale,
     log_batch_start, log_batch_generation_complete, log_e_step_progress
 )
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
+
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
