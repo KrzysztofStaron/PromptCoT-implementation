@@ -48,6 +48,7 @@ MAX_K_SAMPLES = 8
 MIN_K_SAMPLES = 4
 BATCH_SIZE = 16
 USE_GROQ_TIEBREAKER = True
+GRADIENT_ACCUMULATION_STEPS = 8  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps
 
 # === SAMPLING SCHEDULE ===
 def get_k_samples_for_iteration(iter_num_1_indexed: int) -> int:
@@ -127,15 +128,30 @@ qφ = PeftModel.from_pretrained(
 def find_latest_checkpoint():
     """
     Find the latest checkpoint iteration number.
-    Returns 1-indexed iteration number (e.g., 1, 2, 3, ...)
+    Returns tuple (iter_num, is_incomplete) where iter_num is 1-indexed and is_incomplete indicates if it's an incomplete checkpoint.
     Handles migration from 0-indexed (iter_0) to 1-indexed (iter_1, iter_2, ...).
     """
     if not os.path.exists(CHECKPOINT_DIR):
-        return None
+        return None, False
     
-    checkpoint_files = [f for f in os.listdir(CHECKPOINT_DIR) if f.startswith("iter_") and f.endswith("_triples.jsonl")]
+    # Check for incomplete checkpoints first (they take priority)
+    incomplete_files = [f for f in os.listdir(CHECKPOINT_DIR) if f.startswith("iter_") and f.endswith("_incomplete_triples.jsonl")]
+    if incomplete_files:
+        iterations = []
+        for f in incomplete_files:
+            try:
+                iter_num = int(f.split("_")[1])
+                iterations.append(iter_num)
+            except (ValueError, IndexError):
+                continue
+        if iterations:
+            max_iter = max(iterations)
+            return max_iter, True
+    
+    # Check for completed checkpoints
+    checkpoint_files = [f for f in os.listdir(CHECKPOINT_DIR) if f.startswith("iter_") and f.endswith("_triples.jsonl") and not f.endswith("_incomplete_triples.jsonl")]
     if not checkpoint_files:
-        return None
+        return None, False
     
     iterations = []
     for f in checkpoint_files:
@@ -146,34 +162,38 @@ def find_latest_checkpoint():
             continue
     
     if not iterations:
-        return None
+        return None, False
     
     max_iter = max(iterations)
     # Handle migration: if max_iter is 0, it's old 0-indexed format (iter_0 = iteration 1 completed)
-    # Otherwise, assume 1-indexed format (iter_1 = iteration 1 completed, iter_2 = iteration 2 completed, etc.)
     if max_iter == 0:
         # Old format: iter_0 means iteration 1 completed (1-indexed)
-        return 1
+        return 1, False
     # New format: iter_1 means iteration 1 completed, iter_2 means iteration 2 completed, etc.
-    return max_iter
+    return max_iter, False
 
-def load_checkpoint(iter_num_1_indexed):
+def load_checkpoint(iter_num_1_indexed, incomplete=False):
     """
     Load triples from a specific checkpoint iteration.
     
     Args:
         iter_num_1_indexed: 1-indexed iteration number (e.g., 1, 2, 3, ...)
+        incomplete: If True, loads incomplete checkpoint
     """
-    # Try 1-indexed format first (iter_1, iter_2, ...)
-    checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num_1_indexed}_triples.jsonl")
+    if incomplete:
+        checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num_1_indexed}_incomplete_triples.jsonl")
+    else:
+        checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num_1_indexed}_triples.jsonl")
+    
     if os.path.exists(checkpoint_file):
         with open(checkpoint_file) as f:
             triples = [json.loads(line) for line in f]
-        log.info(f"Loaded checkpoint from iteration {iter_num_1_indexed}: {len(triples)} triples")
+        status = "incomplete" if incomplete else "completed"
+        log.info(f"Loaded {status} checkpoint from iteration {iter_num_1_indexed}: {len(triples)} triples")
         return triples
     
     # Fallback: try 0-indexed format for backward compatibility (iter_0 = iteration 1)
-    if iter_num_1_indexed == 1:
+    if iter_num_1_indexed == 1 and not incomplete:
         old_checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_0_triples.jsonl")
         if os.path.exists(old_checkpoint_file):
             with open(old_checkpoint_file) as f:
@@ -181,12 +201,26 @@ def load_checkpoint(iter_num_1_indexed):
             log.info(f"Loaded checkpoint from iteration 1 (old format iter_0): {len(triples)} triples")
             return triples
     
-    log.warning(f"Checkpoint file not found for iteration {iter_num_1_indexed}")
+    log.warning(f"Checkpoint file not found for iteration {iter_num_1_indexed} (incomplete={incomplete})")
     return None
 
-def save_checkpoint(iter_num, triples):
-    """Save triples to checkpoint file."""
-    checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num}_triples.jsonl")
+def save_checkpoint(iter_num, triples, incomplete=False):
+    """Save triples to checkpoint file.
+    
+    Args:
+        iter_num: Iteration number (1-indexed)
+        triples: List of triples to save
+        incomplete: If True, saves as incomplete checkpoint (for resuming mid-iteration)
+    """
+    if incomplete:
+        checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num}_incomplete_triples.jsonl")
+    else:
+        checkpoint_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num}_triples.jsonl")
+        # Remove incomplete checkpoint if it exists (iteration was completed)
+        incomplete_file = os.path.join(CHECKPOINT_DIR, f"iter_{iter_num}_incomplete_triples.jsonl")
+        if os.path.exists(incomplete_file):
+            os.remove(incomplete_file)
+    
     with open(checkpoint_file, 'w') as f:
         for triple in triples:
             f.write(json.dumps(triple) + '\n')
@@ -194,13 +228,18 @@ def save_checkpoint(iter_num, triples):
 
 # === LOAD DATA (from checkpoint or seed) ===
 # Note: All iterations are 1-indexed (iter_1, iter_2, etc.)
-latest_iter = find_latest_checkpoint()
+latest_iter, is_incomplete = find_latest_checkpoint()
 if latest_iter is not None:
-    log.info(f"Found latest checkpoint at iteration {latest_iter}")
-    current_triples = load_checkpoint(latest_iter)
-    # latest_iter is the completed iteration, so start from the next one
-    start_iter = latest_iter + 1
-    log.info(f"Resuming from iteration {start_iter}")
+    log.info(f"Found latest checkpoint at iteration {latest_iter} ({'incomplete' if is_incomplete else 'completed'})")
+    current_triples = load_checkpoint(latest_iter, incomplete=is_incomplete)
+    if is_incomplete:
+        # Incomplete checkpoint means we were interrupted during this iteration - resume from it
+        start_iter = latest_iter
+        log.info(f"Resuming from iteration {start_iter} (iteration {latest_iter} was incomplete)")
+    else:
+        # Completed checkpoint means we finished this iteration - start from next
+        start_iter = latest_iter + 1
+        log.info(f"Resuming from iteration {start_iter} (iteration {latest_iter} was completed)")
 else:
     log.info("No checkpoint found, starting from seed data")
     with open(SEED_FILE) as f:
@@ -378,6 +417,7 @@ def m_step(model, triples, mode, em_iter_0_indexed):
         args=TrainingArguments(
             output_dir="temp",
             per_device_train_batch_size=2,
+            gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
             num_train_epochs=1,
             bf16=True,
             report_to="none",  # Disable auto-logging, we log manually
@@ -432,8 +472,8 @@ else:
         # Check for shutdown at start of iteration
         if shutdown_event.is_set():
             log.info(f"Shutdown detected at start of iteration {em_iter}. Saving checkpoint...")
-            # Save current state (from previous iteration)
-            save_checkpoint(em_iter - 1, current_triples)
+            # Save current state (from previous iteration, which was completed)
+            save_checkpoint(em_iter - 1, current_triples, incomplete=False)
             log.info("Checkpoint saved. Exiting gracefully.")
             break
         
@@ -454,11 +494,11 @@ else:
             # Check for shutdown during E-step processing
             if shutdown_event.is_set():
                 log.info(f"Shutdown detected during E-step of iteration {em_iter}. Saving partial progress...")
-                # Save partial new_triples if we have any, otherwise save current_triples
+                # Save partial new_triples if we have any (incomplete), otherwise save current_triples (completed)
                 if new_triples:
-                    save_checkpoint(em_iter, new_triples)
+                    save_checkpoint(em_iter, new_triples, incomplete=True)
                 else:
-                    save_checkpoint(em_iter - 1, current_triples)
+                    save_checkpoint(em_iter - 1, current_triples, incomplete=False)
                 log.info("Checkpoint saved. Exiting gracefully.")
                 break
             batch_c.append(t["concepts"])
@@ -528,9 +568,9 @@ else:
                 if shutdown_event.is_set():
                     log.info(f"Shutdown detected after batch {batch_num} of iteration {em_iter}. Saving partial progress...")
                     if new_triples:
-                        save_checkpoint(em_iter, new_triples)
+                        save_checkpoint(em_iter, new_triples, incomplete=True)
                     else:
-                        save_checkpoint(em_iter - 1, current_triples)
+                        save_checkpoint(em_iter - 1, current_triples, incomplete=False)
                     log.info("Checkpoint saved. Exiting gracefully.")
                     break
 
@@ -600,16 +640,16 @@ else:
             if shutdown_event.is_set():
                 log.info(f"Shutdown detected after final batch of iteration {em_iter}. Saving progress...")
                 if new_triples:
-                    save_checkpoint(em_iter, new_triples)
+                    save_checkpoint(em_iter, new_triples, incomplete=True)
                 else:
-                    save_checkpoint(em_iter - 1, current_triples)
+                    save_checkpoint(em_iter - 1, current_triples, incomplete=False)
                 log.info("Checkpoint saved. Exiting gracefully.")
                 break
         
         # Check for shutdown after E-step completes
         if shutdown_event.is_set():
             log.info(f"Shutdown detected after E-step of iteration {em_iter}. Saving progress...")
-            save_checkpoint(em_iter, new_triples)
+            save_checkpoint(em_iter, new_triples, incomplete=True)
             log.info("Checkpoint saved. Exiting gracefully.")
             break
         
@@ -625,7 +665,7 @@ else:
         if shutdown_event.is_set():
             log.info(f"Shutdown detected after M-step of iteration {em_iter}. Saving checkpoint...")
             current_triples = new_triples
-            save_checkpoint(em_iter, current_triples)
+            save_checkpoint(em_iter, current_triples, incomplete=False)
             log.info("Checkpoint saved. Exiting gracefully.")
             break
         
