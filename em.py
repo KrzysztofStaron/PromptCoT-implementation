@@ -11,6 +11,7 @@
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
 import json
 import torch
+import gc
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback, BitsAndBytesConfig
 from datasets import Dataset
 from peft import PeftModel
@@ -178,6 +179,10 @@ if latest_iter_hf is not None:
         subfolder=q_latest_path.rstrip("/"),
         token=HF_TOKEN,
     )
+    # Clear memory after loading models
+    torch.cuda.empty_cache()
+    gc.collect()
+    log.info("Models loaded. GPU memory cleared.")
 else:
     # Load from cold-start (initial models)
     log.info(f"No iterations found. Loading pθ adapters from cold-start: {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
@@ -214,6 +219,11 @@ else:
         log.error(f"Failed to load qφ from cold-start: {e}")
         log.error("Make sure cold-start models have been uploaded to HuggingFace first!")
         raise
+    
+    # Clear memory after loading models
+    torch.cuda.empty_cache()
+    gc.collect()
+    log.info("Models loaded. GPU memory cleared.")
 
 # === LOAD DATA ===
 # Always start from seed file (data is not checkpointed, only models are)
@@ -284,6 +294,7 @@ def compute_reward(pθ, c, x, z):
             return_tensors="pt"
         ).to(pθ.device)
         loss_x = pθ(**input_x, labels=input_x["input_ids"]).loss
+        del input_x  # Free memory immediately
 
         # log pθ(z | c)
         input_z = tokenizer(
@@ -291,6 +302,7 @@ def compute_reward(pθ, c, x, z):
             return_tensors="pt"
         ).to(pθ.device)
         loss_z = pθ(**input_z, labels=input_z["input_ids"]).loss
+        del input_z  # Free memory immediately
 
         reward = -(loss_x.item() + loss_z.item())
         return reward
@@ -305,6 +317,9 @@ def batched_e_step(qφ, batch_c, batch_x, num_samples):
     if shutdown_event.is_set():
         raise ImmediateShutdown("Shutdown requested before generation")
     
+    # Clear cache before generation to avoid OOM
+    torch.cuda.empty_cache()
+    
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
     inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=1024).to(qφ.device)
 
@@ -316,7 +331,7 @@ def batched_e_step(qφ, batch_c, batch_x, num_samples):
         
         outputs = qφ.generate(
             **inputs,
-            max_new_tokens=1024,
+            max_new_tokens=512,  # Reduced from 1024 to avoid OOM
             do_sample=True,
             temperature=0.7,
             top_p=0.9,
@@ -325,6 +340,9 @@ def batched_e_step(qφ, batch_c, batch_x, num_samples):
             return_dict_in_generate=True,
             output_scores=True
         )
+    
+    # Clear cache after generation
+    torch.cuda.empty_cache()
 
     sequences = outputs.sequences.reshape(len(batch_c), num_samples, -1)
     z_candidates = []
