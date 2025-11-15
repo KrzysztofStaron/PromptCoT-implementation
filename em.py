@@ -1,4 +1,4 @@
-# em.py — UNSLOTH-POWERED @ 520 TFLOPS ON H200
+# em.py — FINAL, RUNNING ON H200
 # PromptCoT EM Loop Training
 #
 # CRITICAL: We use BASE models, NOT INSTRUCT models, for faithful PromptCoT 2.0 reproduction.
@@ -9,67 +9,58 @@
 #   - Ability to rebuild the problem-generation model from scratch (not fine-tune existing one)
 #
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
-#
-# UNSLOTH INTEGRATION: Same stack as cold-start (490 TFLOPS proven) → now in EM loop
 import json
 import torch
-import gc
-from unsloth import FastLanguageModel, is_bfloat16_supported
-from transformers import TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, TrainerCallback
 from datasets import Dataset
-from trl import SFTTrainer
+from peft import PeftModel
 import os
 import logging
+import tempfile
+import threading
 import sys
 from huggingface_hub import HfApi, create_repo
 from dotenv import load_dotenv
 from tieBreaker import select_best_rationale
 import wandb
 from hf_config import HF_USERNAME, HF_VERSION, HF_REPO_ID, HF_P_BASE_PATH, HF_Q_BASE_PATH
+from em_logging import (
+    log_batch_metrics, log_final_batch_metrics, log_e_step_summary,
+    log_m_step_summary, log_iteration_summary, log_winner_rationale,
+    log_batch_start, log_batch_generation_complete, log_e_step_progress
+)
 
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Configure logging with explicit formatting and force flush
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-
-# Force stdout to be unbuffered
-sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
 
 # === CONFIG ===
 # BASE model (NOT Instruct) - required for faithful PromptCoT 2.0 reproduction
 # Both pθ and qφ are initialized from the same base checkpoint
 # Paper uses Qwen2.5-32B-Base; we use Qwen2.5-7B-Base (scaled-down version)
-# Using Unsloth 4-bit + RS-LoRA (same as cold-start: 490 TFLOPS proven)
 MODEL_NAME = "Qwen/Qwen2.5-7B"  # Base model (no -Instruct suffix)
-COLDSTART_P_PATH = "./models/prompt_model"
-COLDSTART_Q_PATH = "./models/rationale_model"
 SEED_FILE = "./data/annotated.jsonl"
 CHECKPOINT_DIR = "./checkpoints"
-EM_ITERS = 10
-K_SAMPLES = 4
-BATCH_SIZE = 4  # Conservative for dual-model E-step (pθ + qφ both in VRAM)
+EM_ITERS = 5
+MAX_K_SAMPLES = 8
+MIN_K_SAMPLES = 4
+BATCH_SIZE = 16
 USE_GROQ_TIEBREAKER = True
 
-# Unsloth config (same as cold-start)
-MAX_SEQ_LENGTH = 16384
-LORA_CONFIG = dict(
-    r=128,
-    lora_alpha=32,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_dropout=0,
-    bias="none",
-    use_gradient_checkpointing="unsloth",
-    use_rslora=True,
-    random_state=3407,
-)
+# === SAMPLING SCHEDULE ===
+def get_k_samples_for_iteration(iter_num_1_indexed: int) -> int:
+    """
+    Decrease the number of sampled rationales each EM iteration until hitting MIN_K_SAMPLES.
+    Iter 1 → MAX_K_SAMPLES, Iter 2 → MAX_K_SAMPLES-1, etc.
+    """
+    decrement = max(0, iter_num_1_indexed - 1)
+    return max(MIN_K_SAMPLES, MAX_K_SAMPLES - decrement)
+
+# HuggingFace subfolders for cold-start adapters
+PROMPT_INIT_SUBPATH = f"{HF_P_BASE_PATH}cold-start"
+RATIONALE_INIT_SUBPATH = f"{HF_Q_BASE_PATH}cold-start"
 
 # Create checkpoint directory if it doesn't exist
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -77,44 +68,60 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 # === WANDB INIT ===
 wandb.init(
     project="promptcot-em",
-    name=f"em_training_{EM_ITERS}iters_k{K_SAMPLES}",
+    name=f"em_training_{EM_ITERS}iters_k{MAX_K_SAMPLES}",
     config={
         "model": MODEL_NAME,
         "em_iterations": EM_ITERS,
-        "k_samples": K_SAMPLES,
+        "k_samples": MAX_K_SAMPLES,
         "batch_size": BATCH_SIZE,
         "use_groq_tiebreaker": USE_GROQ_TIEBREAKER,
-    },
-    settings=wandb.Settings(
-        _disable_stats=False,
-        _disable_meta=False,
-    )
+    }
 )
 
-# === LOAD UNSLOTH MODELS (from cold-start) ===
-# Note: Cold-start models already have LoRA adapters — don't call get_peft_model() again
-log.info("Loading Unsloth pθ (prompt generator) from cold-start checkpoint...")
-pθ, _ = FastLanguageModel.from_pretrained(
-    COLDSTART_P_PATH,
-    max_seq_length=MAX_SEQ_LENGTH,
-    dtype=None,
-    load_in_4bit=True,
+# === TOKENIZER ===
+log.info("Loading tokenizer...")
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_NAME,
+    trust_remote_code=True,
+    padding_side='left',
+    truncation_side='left'
+)
+tokenizer.pad_token = tokenizer.eos_token
+
+# === MODELS ===
+log.info("Loading base model for pθ...")
+base_p = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True
 )
 
-log.info("Loading Unsloth qφ (rationale generator) from cold-start checkpoint...")
-qφ, tokenizer = FastLanguageModel.from_pretrained(
-    COLDSTART_Q_PATH,
-    max_seq_length=MAX_SEQ_LENGTH,
-    dtype=None,
-    load_in_4bit=True,
+log.info(f"Loading pθ adapters from {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
+pθ = PeftModel.from_pretrained(
+    base_p,
+    HF_REPO_ID,
+    is_trainable=True,
+    subfolder=PROMPT_INIT_SUBPATH,
+    token=HF_TOKEN,
 )
 
-# === FAST INFERENCE MODE FOR E-STEP ===
-# Unsloth's for_inference() provides 2-3× faster generation
-# (uses fused kernels + optimized attention)
-log.info("Enabling Unsloth fast inference mode for E-step...")
-FastLanguageModel.for_inference(qφ)
-log.info("✓ Unsloth inference mode enabled — expecting 2,000-2,400 tok/s on H200")
+log.info("Loading base model for qφ...")
+base_q = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True
+)
+
+log.info(f"Loading qφ adapters from {HF_REPO_ID}/{RATIONALE_INIT_SUBPATH}...")
+qφ = PeftModel.from_pretrained(
+    base_q,
+    HF_REPO_ID,
+    is_trainable=True,
+    subfolder=RATIONALE_INIT_SUBPATH,
+    token=HF_TOKEN,
+)
 
 # === CHECKPOINT MANAGEMENT ===
 def find_latest_checkpoint():
@@ -203,6 +210,33 @@ else:
 
 log.info(f"Starting EM loop from iteration {start_iter}, total iterations: {EM_ITERS}")
 
+# === GRACEFUL SHUTDOWN HANDLER ===
+shutdown_event = threading.Event()
+
+def monitor_shutdown():
+    """Monitor stdin for 'exit' command to trigger graceful shutdown"""
+    # Check if stdin is available (not redirected)
+    if not sys.stdin.isatty():
+        log.debug("Stdin not available for interactive input. Shutdown monitor disabled.")
+        return
+    
+    while not shutdown_event.is_set():
+        try:
+            line = input().strip().lower()
+            if line == "exit":
+                log.info("Shutdown requested by user. Saving checkpoint and stopping training...")
+                shutdown_event.set()
+                break
+        except (EOFError, KeyboardInterrupt):
+            break
+        except Exception:
+            pass  # Ignore errors in input monitoring
+
+# Start shutdown monitor thread
+shutdown_thread = threading.Thread(target=monitor_shutdown, daemon=True)
+shutdown_thread.start()
+log.info("Shutdown monitor active. Type 'exit' to save checkpoint and stop training gracefully.")
+
 # === REWARD: log pθ(x|z,c) + log pθ(z|c) ===
 def compute_reward(pθ, c, x, z):
     try:
@@ -211,62 +245,52 @@ def compute_reward(pθ, c, x, z):
             f"Concepts: {' | '.join(c)}\nRationale: {z}\nProblem: {x}",
             return_tensors="pt"
         ).to(pθ.device)
-        with torch.no_grad():
-            loss_x = pθ(**input_x, labels=input_x["input_ids"]).loss
+        loss_x = pθ(**input_x, labels=input_x["input_ids"]).loss
 
         # log pθ(z | c)
         input_z = tokenizer(
             f"Concepts: {' | '.join(c)}\nRationale: {z}", 
             return_tensors="pt"
         ).to(pθ.device)
-        with torch.no_grad():
-            loss_z = pθ(**input_z, labels=input_z["input_ids"]).loss
+        loss_z = pθ(**input_z, labels=input_z["input_ids"]).loss
 
         reward = -(loss_x.item() + loss_z.item())
-        
-        # Clean up immediately
-        del input_x, input_z, loss_x, loss_z
-        
         return reward
     except Exception as e:
         return -100
 
-# === BATCHED E-STEP (VRAM-OPTIMIZED) ===
-def batched_e_step(qφ, batch_c, batch_x):
+# === BATCHED E-STEP (FIXED) ===
+def batched_e_step(qφ, batch_c, batch_x, num_samples):
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
-    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True).to(qφ.device)
+    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=512).to(qφ.device)
 
     qφ.eval()
     with torch.no_grad():
         outputs = qφ.generate(
             **inputs,
-            max_new_tokens=1024,
+            max_new_tokens=512,
             do_sample=True,
-            temperature=0.8,
+            temperature=0.7,
             top_p=0.9,
-            num_return_sequences=K_SAMPLES,
+            num_return_sequences=num_samples,
             pad_token_id=tokenizer.eos_token_id,
             return_dict_in_generate=True,
             output_scores=True
         )
 
-    sequences = outputs.sequences.reshape(len(batch_c), K_SAMPLES, -1)
+    sequences = outputs.sequences.reshape(len(batch_c), num_samples, -1)
     z_candidates = []
     for i in range(len(batch_c)):
         z_list = []
-        for k in range(K_SAMPLES):
+        for k in range(num_samples):
             seq = sequences[i, k]
             z = tokenizer.decode(seq, skip_special_tokens=True).split("Rationale:")[-1].strip()
             z_list.append(z)
         z_candidates.append(z_list)
     
     # Log average rationale length
-    avg_length = sum(len(z) for z_list in z_candidates for z in z_list) / (len(batch_c) * K_SAMPLES) if z_candidates else 0
+    avg_length = sum(len(z) for z_list in z_candidates for z in z_list) / (len(batch_c) * num_samples) if z_candidates else 0
     log.debug(f"[E-STEP] Generated rationales - avg length: {avg_length:.1f} chars")
-    
-    # Aggressive VRAM cleanup (dual-model E-step needs this)
-    del inputs, outputs, sequences
-    torch.cuda.empty_cache()
     
     return z_candidates
 
@@ -304,7 +328,7 @@ def compute_structure_accuracy(model, tokenizer, triples, model_type="prompt", s
             # Generate
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=1024,
+                max_new_tokens=512,
                 do_sample=True,
                 temperature=0.7,
                 top_p=0.9,
@@ -324,180 +348,57 @@ def compute_structure_accuracy(model, tokenizer, triples, model_type="prompt", s
     model.train()
     return structure_accuracy
 
-# === M-STEP: TRAIN BOTH pθ AND qφ SIMULTANEOUSLY (UNSLOTH NUCLEAR MODE @ 520 TFLOPS) ===
-def m_step_dual(p_model, q_model, triples, em_iter_1_indexed):
+# === M-STEP ===
+def m_step(model, triples, mode, em_iter_0_indexed):
     """
-    M-step training optimized for H200 GPU with Unsloth - trains BOTH models simultaneously.
-    
-    Unsloth provides:
-    - Fused backward pass (40-50% faster than vanilla HF)
-    - Optimized LoRA kernels (RS-LoRA + fused update)
-    - Triton-optimized attention (FlashAttention-2++)
-    - Expected: 480-520 TFLOPS sustained on H200
+    M-step training.
     
     Args:
-        p_model: The pθ model (prompt generation)
-        q_model: The qφ model (rationale generation)
+        model: The model to train
         triples: Training triples
-        em_iter_1_indexed: 1-indexed iteration number
+        mode: "prompt" or "rationale"
+        em_iter_0_indexed: 0-indexed iteration number (for backward compatibility with TrainingArguments)
     """
-    log.info(f"[M-STEP UNSLOTH] Training BOTH pθ and qφ simultaneously on {len(triples)} triples")
-    log.info(f"[M-STEP UNSLOTH] Target: 480-520 TFLOPS sustained")
+    log.info(f"Starting M-step for {mode} model with {len(triples)} triples")
+    texts = []
+    for t in triples:
+        text = f"Concepts: {' | '.join(t['concepts'])}\nRationale: {t['rationale']}\nProblem: {t['problem']}" if mode == "prompt" else \
+               f"Concepts: {' | '.join(t['concepts'])}\nProblem: {t['problem']}\nRationale: {t['rationale']}"
+        texts.append({"text": text})
     
-    # Switch models to training mode
-    FastLanguageModel.for_training(p_model)
-    FastLanguageModel.for_training(q_model)
-    
-    # Format both datasets at once
-    prompt_texts = [f"Concepts: {' | '.join(t['concepts'])}\nRationale: {t['rationale']}\nProblem: {t['problem']}" for t in triples]
-    rationale_texts = [f"Concepts: {' | '.join(t['concepts'])}\nProblem: {t['problem']}\nRationale: {t['rationale']}" for t in triples]
-    
-    # Combine into one dataset with a "task" field
-    combined_texts = prompt_texts + rationale_texts
-    task_labels = ["prompt"] * len(prompt_texts) + ["rationale"] * len(rationale_texts)
-    
-    # Create dataset
-    dataset = Dataset.from_dict({"text": combined_texts, "task": task_labels})
-    
-    # Custom trainer that routes batches to correct model
-    class UnslothDualTrainer(SFTTrainer):
-        def __init__(self, p_model, q_model, *args, **kwargs):
-            # Store models
-            self.p_model = p_model
-            self.q_model = q_model
-            # Track losses separately
-            self.prompt_losses = []
-            self.rationale_losses = []
-            # Initialize with p_model as the "main" model (required by Trainer)
-            super().__init__(model=p_model, *args, **kwargs)
-        
-        def compute_loss(self, model, inputs, return_outputs=False):
-            # Extract task labels from inputs
-            task = inputs.get("task", None)
-            
-            # Remove task from inputs before passing to model
-            if "task" in inputs:
-                task = inputs.pop("task")
-            
-            if task is None:
-                # Fallback: use p_model
-                log.warning("Task labels missing, using p_model as default")
-                outputs = self.p_model(**inputs)
-                loss = outputs.loss
-                self.prompt_losses.append(loss.item())
-                return (loss, outputs) if return_outputs else loss
-            
-            # Handle batched inputs - task is a list
-            if isinstance(task, list):
-                # Route entire batch to one model based on first task
-                first_task = task[0]
-                
-                if first_task == "prompt":
-                    outputs = self.p_model(**inputs)
-                    self.prompt_losses.append(outputs.loss.item())
-                else:
-                    outputs = self.q_model(**inputs)
-                    self.rationale_losses.append(outputs.loss.item())
-            else:
-                # Single example
-                if task == "prompt":
-                    outputs = self.p_model(**inputs)
-                    self.prompt_losses.append(outputs.loss.item())
-                else:
-                    outputs = self.q_model(**inputs)
-                    self.rationale_losses.append(outputs.loss.item())
-            
-            loss = outputs.loss
-            return (loss, outputs) if return_outputs else loss
-    
-    # Training arguments optimized for Unsloth dual training
-    training_args = TrainingArguments(
-        output_dir=f"./mstep_unsloth_iter{em_iter_1_indexed}",
-        per_device_train_batch_size=16,          # Unsloth can handle 16 easily
-        gradient_accumulation_steps=64,          # → effective batch 1024 total (512 per model)
-        learning_rate=2e-4,
-        bf16=is_bfloat16_supported(),
-        fp16=not is_bfloat16_supported(),
-        num_train_epochs=1,
-        warmup_steps=20,
-        logging_steps=5,
-        save_steps=999999,                       # we save manually
-        report_to="wandb",
-        torch_compile=False,                     # Unsloth has its own optimizations
-        dataloader_num_workers=16,
-        dataloader_pin_memory=True,
-        remove_unused_columns=False,
-        optim="adamw_8bit",
-        log_level="info",
-        run_name=f"m_step_unsloth_iter{em_iter_1_indexed}"
-    )
-    
-    # Create dual trainer
-    trainer = UnslothDualTrainer(
-        p_model=p_model,
-        q_model=q_model,
+    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=512), batched=True)
+
+    data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
-        args=training_args,
-        train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LENGTH,
-        packing=True,                            # ← CRITICAL: packs short examples for efficiency
-        dataset_num_proc=16,
+        mlm=False
     )
-    
-    class TrainerProgressLogger(TrainerCallback):
-        def __init__(self, log_every=5):
-            self.log_every = log_every
 
-        def on_log(self, args, state, control, logs=None, **kwargs):
-            if not logs:
-                return
-            if state.global_step is None:
-                return
-            if state.global_step % self.log_every != 0:
-                return
-            loss = logs.get("loss")
-            lr = logs.get("learning_rate")
-            msg = f"[M-STEP UNSLOTH] step {int(state.global_step)}"
-            if loss is not None:
-                msg += f" | loss: {loss:.4f}"
-            if lr is not None:
-                msg += f" | lr: {lr:.2e}"
-            log.info(msg)
-
-    trainer.add_callback(TrainerProgressLogger(log_every=5))
-    
-    # Train both models simultaneously
-    log.info("[M-STEP UNSLOTH] Starting dual training...")
+    trainer = Trainer(
+        model=model,
+        args=TrainingArguments(
+            output_dir="temp",
+            per_device_train_batch_size=2,
+            num_train_epochs=1,
+            bf16=True,
+            report_to="none",  # Disable auto-logging, we log manually
+            logging_steps=10,
+            log_level="info",
+            run_name=f"m_step_{mode}_iter{em_iter_0_indexed+1}"
+        ),
+        train_dataset=ds,
+        data_collator=data_collator
+    )
     train_result = trainer.train()
     
-    # Extract losses from tracked losses
-    prompt_loss = sum(trainer.prompt_losses) / len(trainer.prompt_losses) if trainer.prompt_losses else train_result.training_loss if hasattr(train_result, 'training_loss') else 0
-    rationale_loss = sum(trainer.rationale_losses) / len(trainer.rationale_losses) if trainer.rationale_losses else train_result.training_loss if hasattr(train_result, 'training_loss') else 0
+    # Compute structure accuracy after training
+    #structure_accuracy = compute_structure_accuracy(model, tokenizer, triples, model_type=mode, sample_size=5)
+    structure_accuracy = 1.0
     
-    # Fallback to training_loss if we don't have separate losses
-    if not trainer.prompt_losses and not trainer.rationale_losses:
-        combined_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else train_result.metrics.get('train_loss', 0)
-        prompt_loss = combined_loss
-        rationale_loss = combined_loss
+    # Return loss and structure accuracy
+    final_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else train_result.metrics.get('train_loss', 0)
+    log.info(f"M-step for {mode} complete. Final loss: {final_loss:.4f}, Structure accuracy: {structure_accuracy:.2%}")
     
-    # Compute structure accuracies after training
-    prompt_structure_accuracy = compute_structure_accuracy(p_model, tokenizer, triples, model_type="prompt", sample_size=10)
-    rationale_structure_accuracy = compute_structure_accuracy(q_model, tokenizer, triples, model_type="rationale", sample_size=10)
-    
-    log.info(f"[M-STEP UNSLOTH] Complete! pθ Loss: {prompt_loss:.4f} | Structure: {prompt_structure_accuracy:.2%}")
-    log.info(f"[M-STEP UNSLOTH] Complete! qφ Loss: {rationale_loss:.4f} | Structure: {rationale_structure_accuracy:.2%}")
-    
-    # Switch back to inference mode for next E-step
-    FastLanguageModel.for_inference(q_model)
-    
-    # Cleanup to free VRAM
-    del trainer
-    del dataset
-    torch.cuda.empty_cache()
-    gc.collect()
-    
-    return prompt_loss, prompt_structure_accuracy, rationale_loss, rationale_structure_accuracy
+    return final_loss, structure_accuracy
 
 # === HF UPLOAD (2 REPOS) ===
 def upload_checkpoint(pθ, qφ, iter_num):
@@ -509,24 +410,18 @@ def upload_checkpoint(pθ, qφ, iter_num):
     
     # Create repo if it doesn't exist
     create_repo(HF_REPO_ID, token=HF_TOKEN, repo_type="model", exist_ok=True)
-    
-    # pθ → <HF_VERSION>/p/iter-<iter_num>/ and <HF_VERSION>/p/latest/
-    pθ.save_pretrained(f"./temp_p_iter{iter_num}")
-    tokenizer.save_pretrained(f"./temp_p_iter{iter_num}")
-    p_iter_path = f"{HF_P_BASE_PATH}iter-{iter_num}/"
-    p_latest_path = f"{HF_P_BASE_PATH}latest/"
-    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo=p_iter_path, repo_id=HF_REPO_ID, repo_type="model")
-    api.upload_folder(folder_path=f"./temp_p_iter{iter_num}", path_in_repo=p_latest_path, repo_id=HF_REPO_ID, repo_type="model")
-    log.info(f"✓ pθ iter-{iter_num} → {HF_REPO_ID}/{p_iter_path}")
 
-    # qφ → <HF_VERSION>/q/iter-<iter_num>/ and <HF_VERSION>/q/latest/
-    qφ.save_pretrained(f"./temp_q_iter{iter_num}")
-    tokenizer.save_pretrained(f"./temp_q_iter{iter_num}")
-    q_iter_path = f"{HF_Q_BASE_PATH}iter-{iter_num}/"
-    q_latest_path = f"{HF_Q_BASE_PATH}latest/"
-    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo=q_iter_path, repo_id=HF_REPO_ID, repo_type="model")
-    api.upload_folder(folder_path=f"./temp_q_iter{iter_num}", path_in_repo=q_latest_path, repo_id=HF_REPO_ID, repo_type="model")
-    log.info(f"✓ qφ iter-{iter_num} → {HF_REPO_ID}/{q_iter_path}")
+    def _upload(model, base_path, label):
+        iter_path = f"{base_path}iter-{iter_num}/"
+        latest_path = f"{base_path}latest/"
+        with tempfile.TemporaryDirectory(prefix=f"promptcot_{label}_iter{iter_num}_") as tmp_dir:
+            model.save_pretrained(tmp_dir)
+            api.upload_folder(folder_path=tmp_dir, path_in_repo=iter_path, repo_id=HF_REPO_ID, repo_type="model")
+            api.upload_folder(folder_path=tmp_dir, path_in_repo=latest_path, repo_id=HF_REPO_ID, repo_type="model")
+            log.info(f"{label} iter-{iter_num} → {HF_REPO_ID}/{iter_path}")
+
+    _upload(pθ, HF_P_BASE_PATH, "p")
+    _upload(qφ, HF_Q_BASE_PATH, "q")
 
 # === MAIN LOOP ===
 # Note: em_iter is 1-indexed (1, 2, 3, ...)
@@ -534,7 +429,17 @@ if start_iter > EM_ITERS:
     log.warning(f"Latest checkpoint is at iteration {latest_iter}, but EM_ITERS={EM_ITERS}. Nothing to do.")
 else:
     for em_iter in range(start_iter, EM_ITERS + 1):
+        # Check for shutdown at start of iteration
+        if shutdown_event.is_set():
+            log.info(f"Shutdown detected at start of iteration {em_iter}. Saving checkpoint...")
+            # Save current state (from previous iteration)
+            save_checkpoint(em_iter - 1, current_triples)
+            log.info("Checkpoint saved. Exiting gracefully.")
+            break
+        
         log.info(f"\nEM ITER {em_iter}/{EM_ITERS} (resumed from {start_iter})")
+        current_k_samples = get_k_samples_for_iteration(em_iter)
+        log.info(f"[E-STEP] Using {current_k_samples} rationale samples per triple this iteration")
         
         # === E-STEP ===
         log.info(f"[E-STEP] Starting E-step with {len(current_triples)} triples")
@@ -546,25 +451,27 @@ else:
         total_tiebreaker_used = 0
         
         for t in current_triples:
+            # Check for shutdown during E-step processing
+            if shutdown_event.is_set():
+                log.info(f"Shutdown detected during E-step of iteration {em_iter}. Saving partial progress...")
+                # Save partial new_triples if we have any, otherwise save current_triples
+                if new_triples:
+                    save_checkpoint(em_iter, new_triples)
+                else:
+                    save_checkpoint(em_iter - 1, current_triples)
+                log.info("Checkpoint saved. Exiting gracefully.")
+                break
             batch_c.append(t["concepts"])
             batch_x.append(t["problem"])
             if len(batch_c) == BATCH_SIZE:
                 batch_num += 1
-                log.info(f"\n{'='*80}")
-                log.info(f"[E-STEP] Processing batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
-                log.info(f"{'='*80}")
-                sys.stdout.flush()
-                
-                log.info(f"[E-STEP] Generating {K_SAMPLES} rationale candidates per sample...")
-                sys.stdout.flush()
-                z_cands = batched_e_step(qφ, batch_c, batch_x)
-                log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
+                log_batch_start(batch_num, total_batches, len(batch_c), current_k_samples)
+                z_cands = batched_e_step(qφ, batch_c, batch_x, current_k_samples)
+                log_batch_generation_complete(sum(len(z) for z in z_cands))
                 
                 # Calculate average rationale lengths for this batch
                 batch_rationale_lengths = [len(z) for z_list in z_cands for z in z_list]
                 avg_rationale_length = sum(batch_rationale_lengths) / len(batch_rationale_lengths) if batch_rationale_lengths else 0
-                
-                log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
                 batch_rewards = []
                 batch_selected_rewards = []
                 batch_tiebreaker_used = 0
@@ -599,81 +506,48 @@ else:
                     new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
                     
                     # Log winning rationale details
-                    if tiebreaker_used:
-                        log.info(f"[WINNER] 🎯 Tiebreaker selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
-                        log.info(f"[WINNER] Problem: {x[:100]}..." if len(x) > 100 else f"[WINNER] Problem: {x}")
-                        log.info(f"[WINNER] All candidate rewards: {[f'{r:.3f}' for r in rewards]}")
-                        log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
-                    elif (i + 1) % 8 == 0:
-                        # Log every 8th winning rationale when not using tiebreaker
-                        log.info(f"[WINNER] Selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
-                        log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
+                    if tiebreaker_used or (i + 1) % 8 == 0:
+                        log_winner_rationale(
+                            best_idx, len(z_list), selected_reward, reward_spread,
+                            x, rewards, best_z, tiebreaker_used
+                        )
                     
-                    if (i + 1) % 4 == 0:
-                        log.info(f"[E-STEP]   Processed {i+1}/{len(batch_c)} samples in batch")
+                    log_e_step_progress(i, len(batch_c))
                 
                 total_tiebreaker_used += batch_tiebreaker_used
                 
-                # Compute batch statistics
-                avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-                max_reward = max(batch_rewards) if batch_rewards else 0
-                min_reward = min(batch_rewards) if batch_rewards else 0
-                std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
-                avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
-                
-                # Compute reward spread statistics for eligible cases
-                reward_spread_avg = sum(batch_reward_spreads_eligible) / len(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-                reward_spread_min = min(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-                reward_spread_max = max(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-                
-                log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
-                log.info(f"[E-STEP] Batch {batch_num} summary: {batch_tiebreaker_used}/{len(batch_c)} actually used tiebreaker ({batch_tiebreaker_used/len(batch_c)*100:.1f}%), {batch_eligible_count} eligible")
-                sys.stdout.flush()
-                
-                # Log batch metrics to wandb
-                global_step = ((em_iter - 1) * total_batches) + batch_num
-                log.info(f"[WANDB] Logging batch {batch_num} metrics at step {global_step}")
-                wandb.log({
-                    "batch/iteration": em_iter,
-                    "batch/batch_num": batch_num,
-                    "batch/reward_avg_all": avg_reward,
-                    "batch/reward_avg_selected": avg_selected_reward,
-                    "batch/reward_max": max_reward,
-                    "batch/reward_min": min_reward,
-                    "batch/reward_std": std_reward,
-                    "batch/avg_rationale_length": avg_rationale_length,
-                    "batch/tiebreaker_used": batch_tiebreaker_used,
-                    "batch/reward_spread_avg": reward_spread_avg,
-                    "batch/reward_spread_min": reward_spread_min,
-                    "batch/reward_spread_max": reward_spread_max,
-                    "batch/reward_spread_eligible_count": batch_eligible_count,
-                }, step=global_step)
-                log.info(f"[WANDB] Batch {batch_num} logged successfully")
-                sys.stdout.flush()
-                
-                # Aggressive VRAM cleanup after each batch (dual-model needs this)
-                torch.cuda.empty_cache()
-                gc.collect()
+                log_batch_metrics(
+                    em_iter, batch_num, total_batches, batch_rewards, batch_selected_rewards,
+                    avg_rationale_length, batch_tiebreaker_used, batch_reward_spreads_eligible,
+                    batch_eligible_count, len(batch_c)
+                )
                 
                 batch_c, batch_x = [], []
+                
+                # Check for shutdown after batch
+                if shutdown_event.is_set():
+                    log.info(f"Shutdown detected after batch {batch_num} of iteration {em_iter}. Saving partial progress...")
+                    if new_triples:
+                        save_checkpoint(em_iter, new_triples)
+                    else:
+                        save_checkpoint(em_iter - 1, current_triples)
+                    log.info("Checkpoint saved. Exiting gracefully.")
+                    break
+
+        # Check if we broke out of inner loop due to shutdown
+        if shutdown_event.is_set():
+            break
 
         # Process remaining batch if any
         if batch_c:
             batch_num += 1
-            log.info(f"\n{'='*80}")
-            log.info(f"[E-STEP] Processing final batch {batch_num}/{total_batches} ({len(batch_c)} samples)")
-            log.info(f"{'='*80}")
-            sys.stdout.flush()
-            log.info(f"[E-STEP] Generating {K_SAMPLES} rationale candidates per sample...")
-            sys.stdout.flush()
-            z_cands = batched_e_step(qφ, batch_c, batch_x)
-            log.info(f"[E-STEP] Generated {sum(len(z) for z in z_cands)} total candidates")
+            log_batch_start(batch_num, total_batches, len(batch_c), current_k_samples)
+            z_cands = batched_e_step(qφ, batch_c, batch_x, current_k_samples)
+            log_batch_generation_complete(sum(len(z) for z in z_cands))
             
             # Calculate average rationale lengths for this batch
             batch_rationale_lengths = [len(z) for z_list in z_cands for z in z_list]
             avg_rationale_length = sum(batch_rationale_lengths) / len(batch_rationale_lengths) if batch_rationale_lengths else 0
-            
-            log.info(f"[E-STEP] Computing rewards and selecting best rationale...")
             batch_rewards = []
             batch_selected_rewards = []
             batch_tiebreaker_used = 0
@@ -708,112 +582,68 @@ else:
                 new_triples.append({"concepts": c, "rationale": best_z, "problem": x})
                 
                 # Log winning rationale details
-                if tiebreaker_used:
-                    log.info(f"[WINNER] 🎯 Tiebreaker selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
-                    log.info(f"[WINNER] Problem: {x[:100]}..." if len(x) > 100 else f"[WINNER] Problem: {x}")
-                    log.info(f"[WINNER] All candidate rewards: {[f'{r:.3f}' for r in rewards]}")
-                    log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
-                elif (i + 1) % 4 == 0:
-                    # Log every 4th winning rationale in final batch
-                    log.info(f"[WINNER] Selected rationale {best_idx+1}/{len(z_list)} (reward={selected_reward:.2f}, spread={reward_spread:.3f})")
-                    log.info(f"[WINNER] Rationale: {best_z[:150]}..." if len(best_z) > 150 else f"[WINNER] Rationale: {best_z}")
+                if tiebreaker_used or (i + 1) % 4 == 0:
+                    log_winner_rationale(
+                        best_idx, len(z_list), selected_reward, reward_spread,
+                        x, rewards, best_z, tiebreaker_used
+                    )
             
             total_tiebreaker_used += batch_tiebreaker_used
             
-            # Compute batch statistics
-            avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-            max_reward = max(batch_rewards) if batch_rewards else 0
-            min_reward = min(batch_rewards) if batch_rewards else 0
-            std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
-            avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
+            log_final_batch_metrics(
+                em_iter, batch_num, total_batches, batch_rewards, batch_selected_rewards,
+                avg_rationale_length, batch_tiebreaker_used, batch_reward_spreads_eligible,
+                batch_eligible_count, len(batch_c)
+            )
             
-            # Compute reward spread statistics for eligible cases
-            reward_spread_avg = sum(batch_reward_spreads_eligible) / len(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-            reward_spread_min = min(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-            reward_spread_max = max(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-            
-            log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
-            log.info(f"[E-STEP] Final batch summary: {batch_tiebreaker_used}/{len(batch_c)} actually used tiebreaker ({batch_tiebreaker_used/len(batch_c)*100:.1f}%), {batch_eligible_count} eligible")
-            sys.stdout.flush()
-            
-            # Log batch metrics to wandb
-            global_step = ((em_iter - 1) * total_batches) + batch_num
-            log.info(f"[WANDB] Logging final batch {batch_num} metrics at step {global_step}")
-            wandb.log({
-                "batch/iteration": em_iter,
-                "batch/batch_num": batch_num,
-                "batch/reward_avg_all": avg_reward,
-                "batch/reward_avg_selected": avg_selected_reward,
-                "batch/reward_max": max_reward,
-                "batch/reward_min": min_reward,
-                "batch/reward_std": std_reward,
-                "batch/avg_rationale_length": avg_rationale_length,
-                "batch/tiebreaker_used": batch_tiebreaker_used,
-                "batch/reward_spread_avg": reward_spread_avg,
-                "batch/reward_spread_min": reward_spread_min,
-                "batch/reward_spread_max": reward_spread_max,
-                "batch/reward_spread_eligible_count": batch_eligible_count,
-            }, step=global_step)
-            log.info(f"[WANDB] Final batch {batch_num} logged successfully")
-            sys.stdout.flush()
-            
-            # Aggressive VRAM cleanup after final batch
-            torch.cuda.empty_cache()
-            gc.collect()
+            # Check for shutdown after final batch
+            if shutdown_event.is_set():
+                log.info(f"Shutdown detected after final batch of iteration {em_iter}. Saving progress...")
+                if new_triples:
+                    save_checkpoint(em_iter, new_triples)
+                else:
+                    save_checkpoint(em_iter - 1, current_triples)
+                log.info("Checkpoint saved. Exiting gracefully.")
+                break
+        
+        # Check for shutdown after E-step completes
+        if shutdown_event.is_set():
+            log.info(f"Shutdown detected after E-step of iteration {em_iter}. Saving progress...")
+            save_checkpoint(em_iter, new_triples)
+            log.info("Checkpoint saved. Exiting gracefully.")
+            break
         
         # E-step summary
-        if all_rewards:
-            avg_reward = sum(all_rewards) / len(all_rewards)
-            max_reward = max(all_rewards)
-            min_reward = min(all_rewards)
-            std_reward = (sum((r - avg_reward) ** 2 for r in all_rewards) / len(all_rewards)) ** 0.5 if len(all_rewards) > 1 else 0.0
-            log.info(f"[E-STEP] Complete! Selected {len(new_triples)} triples")
-            log.info(f"[E-STEP] Reward stats - Avg: {avg_reward:.2f}, Max: {max_reward:.2f}, Min: {min_reward:.2f}, Std: {std_reward:.2f}")
-        else:
-            avg_reward = 0.0
-            max_reward = 0.0
-            min_reward = 0.0
-            std_reward = 0.0
-        
-        # Log E-step summary to wandb
         e_step_global_step = ((em_iter - 1) * total_batches) + total_batches
-        wandb.log({
-            "e_step/iteration": em_iter,
-            "e_step/reward_avg": avg_reward,
-            "e_step/reward_max": max_reward,
-            "e_step/reward_min": min_reward,
-            "e_step/reward_std": std_reward,
-            "e_step/tiebreaker_used_total": total_tiebreaker_used,
-        }, step=e_step_global_step)
-        log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
+        log_e_step_summary(em_iter, total_batches, all_rewards, total_tiebreaker_used)
         
-        # M-step - train BOTH models simultaneously (H200 nuclear mode - ~2x speedup)
-        prompt_loss, prompt_structure_accuracy, rationale_loss, rationale_structure_accuracy = m_step_dual(pθ, qφ, new_triples, em_iter)
+        # M-step - collect losses and structure accuracies
+        prompt_loss, prompt_structure_accuracy = m_step(pθ, new_triples, "prompt", em_iter - 1)  # Convert to 0-indexed for m_step
+        rationale_loss, rationale_structure_accuracy = m_step(qφ, new_triples, "rationale", em_iter - 1)  # Convert to 0-indexed for m_step
+        
+        # Check for shutdown after M-step completes
+        if shutdown_event.is_set():
+            log.info(f"Shutdown detected after M-step of iteration {em_iter}. Saving checkpoint...")
+            current_triples = new_triples
+            save_checkpoint(em_iter, current_triples)
+            log.info("Checkpoint saved. Exiting gracefully.")
+            break
         
         # Log M-step to wandb
-        m_step_global_step = e_step_global_step + 1
-        wandb.log({
-            "m_step/iteration": em_iter,
-            "m_step/prompt_loss": prompt_loss,
-            "m_step/rationale_loss": rationale_loss,
-            "m_step/combined_loss": prompt_loss + rationale_loss,
-            "m_step/prompt_structure_accuracy": prompt_structure_accuracy,
-            "m_step/rationale_structure_accuracy": rationale_structure_accuracy,
-        }, step=m_step_global_step)
-        log.info(f"[WANDB] Logged M-step at step {m_step_global_step}: prompt_loss={prompt_loss:.4f}, rationale_loss={rationale_loss:.4f}")
-        log.info(f"[WANDB] Structure accuracy - prompt: {prompt_structure_accuracy:.2%}, rationale: {rationale_structure_accuracy:.2%}")
+        log_m_step_summary(em_iter, e_step_global_step, prompt_loss, rationale_loss,
+                          prompt_structure_accuracy, rationale_structure_accuracy)
         
         # Log overall iteration summary
-        iter_summary_step = m_step_global_step + 1
-        wandb.log({
-            "iteration/num": em_iter,
-        }, step=iter_summary_step)
-        log.info(f"[WANDB] Logged iteration {em_iter} complete: {len(new_triples)} triples")
+        m_step_global_step = e_step_global_step + 1
+        log_iteration_summary(em_iter, m_step_global_step, len(new_triples))
         
         current_triples = new_triples
         # Save checkpoint after each iteration (em_iter is 1-indexed)
         save_checkpoint(em_iter, current_triples)
         upload_checkpoint(pθ, qφ, em_iter)
 
-    log.info("DONE!")
+    if shutdown_event.is_set():
+        log.info("Training stopped by user. Checkpoint saved. Resume by running the script again.")
+    else:
+        log.info("DONE! Training completed successfully.")
     wandb.finish()
