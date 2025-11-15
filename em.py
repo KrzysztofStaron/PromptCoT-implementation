@@ -92,6 +92,7 @@ wandb.init(
 )
 
 # === LOAD UNSLOTH MODELS (from cold-start) ===
+# Note: Cold-start models already have LoRA adapters — don't call get_peft_model() again
 log.info("Loading Unsloth pθ (prompt generator) from cold-start checkpoint...")
 pθ, _ = FastLanguageModel.from_pretrained(
     COLDSTART_P_PATH,
@@ -99,7 +100,6 @@ pθ, _ = FastLanguageModel.from_pretrained(
     dtype=None,
     load_in_4bit=True,
 )
-pθ = FastLanguageModel.get_peft_model(pθ, **LORA_CONFIG)
 
 log.info("Loading Unsloth qφ (rationale generator) from cold-start checkpoint...")
 qφ, tokenizer = FastLanguageModel.from_pretrained(
@@ -108,7 +108,6 @@ qφ, tokenizer = FastLanguageModel.from_pretrained(
     dtype=None,
     load_in_4bit=True,
 )
-qφ = FastLanguageModel.get_peft_model(qφ, **LORA_CONFIG)
 
 # === FAST INFERENCE MODE FOR E-STEP ===
 # Unsloth's for_inference() provides 2-3× faster generation
