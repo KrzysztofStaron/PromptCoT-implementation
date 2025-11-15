@@ -45,11 +45,11 @@ MODEL_NAME = "Qwen/Qwen2.5-7B"  # Base model (no -Instruct suffix)
 SEED_FILE = "./data/annotated.jsonl"
 CHECKPOINT_DIR = "./checkpoints"
 EM_ITERS = 6
-MAX_K_SAMPLES = 8
+MAX_K_SAMPLES = 7
 MIN_K_SAMPLES = 4
 BATCH_SIZE = 16
 USE_GROQ_TIEBREAKER = False
-GRADIENT_ACCUMULATION_STEPS = 8  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps
+GRADIENT_ACCUMULATION_STEPS = 10  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps
 
 # === SAMPLING SCHEDULE ===
 def get_k_samples_for_iteration(iter_num_1_indexed: int) -> int:
