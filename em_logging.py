@@ -11,69 +11,45 @@ def log_batch_metrics(em_iter, batch_num, total_batches, batch_rewards, batch_se
                       avg_rationale_length, batch_tiebreaker_used, batch_reward_spreads_eligible, 
                       batch_eligible_count, batch_size):
     """Log batch-level metrics to wandb"""
-    avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-    max_reward = max(batch_rewards) if batch_rewards else 0
-    min_reward = min(batch_rewards) if batch_rewards else 0
-    std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
-    avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
-    
-    reward_spread_avg = sum(batch_reward_spreads_eligible) / len(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-    reward_spread_min = min(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-    reward_spread_max = max(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+    if batch_rewards:
+        avg_reward = sum(batch_rewards) / len(batch_rewards)
+        max_reward = max(batch_rewards)
+        min_reward = min(batch_rewards)
+    else:
+        avg_reward = max_reward = min_reward = 0.0
     
     global_step = ((em_iter - 1) * total_batches) + batch_num
     wandb.log({
         "batch/iteration": em_iter,
         "batch/batch_num": batch_num,
-        "batch/reward_avg_all": avg_reward,
-        "batch/reward_avg_selected": avg_selected_reward,
-        "batch/reward_max": max_reward,
         "batch/reward_min": min_reward,
-        "batch/reward_std": std_reward,
-        "batch/avg_rationale_length": avg_rationale_length,
-        "batch/tiebreaker_used": batch_tiebreaker_used,
-        "batch/reward_spread_avg": reward_spread_avg,
-        "batch/reward_spread_min": reward_spread_min,
-        "batch/reward_spread_max": reward_spread_max,
-        "batch/reward_spread_eligible_count": batch_eligible_count,
+        "batch/reward_avg": avg_reward,
+        "batch/reward_max": max_reward,
     }, step=global_step)
     
-    log.info(f"[E-STEP] Batch {batch_num} complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
-    log.info(f"[E-STEP] Batch {batch_num} summary: {batch_tiebreaker_used}/{batch_size} actually used tiebreaker ({batch_tiebreaker_used/batch_size*100:.1f}%), {batch_eligible_count} eligible")
+    log.info(f"[E-STEP] Batch {batch_num} complete. Reward - Min: {min_reward:.2f}, Avg: {avg_reward:.2f}, Max: {max_reward:.2f}")
 
 def log_final_batch_metrics(em_iter, batch_num, total_batches, batch_rewards, batch_selected_rewards,
                             avg_rationale_length, batch_tiebreaker_used, batch_reward_spreads_eligible,
                             batch_eligible_count, batch_size):
     """Log final batch metrics to wandb"""
-    avg_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0
-    max_reward = max(batch_rewards) if batch_rewards else 0
-    min_reward = min(batch_rewards) if batch_rewards else 0
-    std_reward = (sum((r - avg_reward) ** 2 for r in batch_rewards) / len(batch_rewards)) ** 0.5 if len(batch_rewards) > 1 else 0.0
-    avg_selected_reward = sum(batch_selected_rewards) / len(batch_selected_rewards) if batch_selected_rewards else 0
-    
-    reward_spread_avg = sum(batch_reward_spreads_eligible) / len(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-    reward_spread_min = min(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
-    reward_spread_max = max(batch_reward_spreads_eligible) if batch_reward_spreads_eligible else 0.0
+    if batch_rewards:
+        avg_reward = sum(batch_rewards) / len(batch_rewards)
+        max_reward = max(batch_rewards)
+        min_reward = min(batch_rewards)
+    else:
+        avg_reward = max_reward = min_reward = 0.0
     
     global_step = (em_iter * total_batches) + batch_num
     wandb.log({
         "batch/iteration": em_iter + 1,
         "batch/batch_num": batch_num,
-        "batch/reward_avg_all": avg_reward,
-        "batch/reward_avg_selected": avg_selected_reward,
-        "batch/reward_max": max_reward,
         "batch/reward_min": min_reward,
-        "batch/reward_std": std_reward,
-        "batch/avg_rationale_length": avg_rationale_length,
-        "batch/tiebreaker_used": batch_tiebreaker_used,
-        "batch/reward_spread_avg": reward_spread_avg,
-        "batch/reward_spread_min": reward_spread_min,
-        "batch/reward_spread_max": reward_spread_max,
-        "batch/reward_spread_eligible_count": batch_eligible_count,
+        "batch/reward_avg": avg_reward,
+        "batch/reward_max": max_reward,
     }, step=global_step)
     
-    log.info(f"[E-STEP] Final batch complete. Avg reward: {avg_reward:.2f}, Best: {max_reward:.2f}")
-    log.info(f"[E-STEP] Final batch summary: {batch_tiebreaker_used}/{batch_size} actually used tiebreaker ({batch_tiebreaker_used/batch_size*100:.1f}%), {batch_eligible_count} eligible")
+    log.info(f"[E-STEP] Final batch complete. Reward - Min: {min_reward:.2f}, Avg: {avg_reward:.2f}, Max: {max_reward:.2f}")
 
 def log_e_step_summary(em_iter, total_batches, all_rewards, total_tiebreaker_used):
     """Log E-step summary to wandb"""
@@ -81,40 +57,36 @@ def log_e_step_summary(em_iter, total_batches, all_rewards, total_tiebreaker_use
         avg_reward = sum(all_rewards) / len(all_rewards)
         max_reward = max(all_rewards)
         min_reward = min(all_rewards)
-        std_reward = (sum((r - avg_reward) ** 2 for r in all_rewards) / len(all_rewards)) ** 0.5 if len(all_rewards) > 1 else 0.0
         log.info(f"[E-STEP] Complete! Selected {len(all_rewards)} triples")
-        log.info(f"[E-STEP] Reward stats - Avg: {avg_reward:.2f}, Max: {max_reward:.2f}, Min: {min_reward:.2f}, Std: {std_reward:.2f}")
+        log.info(f"[E-STEP] Reward - Min: {min_reward:.2f}, Avg: {avg_reward:.2f}, Max: {max_reward:.2f}")
     else:
-        avg_reward = 0.0
-        max_reward = 0.0
-        min_reward = 0.0
-        std_reward = 0.0
+        avg_reward = max_reward = min_reward = 0.0
     
     e_step_global_step = ((em_iter - 1) * total_batches) + total_batches
     wandb.log({
         "e_step/iteration": em_iter,
+        "e_step/reward_min": min_reward,
         "e_step/reward_avg": avg_reward,
         "e_step/reward_max": max_reward,
-        "e_step/reward_min": min_reward,
-        "e_step/reward_std": std_reward,
-        "e_step/tiebreaker_used_total": total_tiebreaker_used,
     }, step=e_step_global_step)
-    log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
+    log.info(f"[WANDB] Logged E-step summary at step {em_iter}: reward_min={min_reward:.2f}, reward_avg={avg_reward:.2f}, reward_max={max_reward:.2f}")
 
 def log_m_step_summary(em_iter, e_step_global_step, prompt_loss, rationale_loss, 
                        prompt_structure_accuracy, rationale_structure_accuracy):
     """Log M-step summary to wandb"""
+    losses = [prompt_loss, rationale_loss]
+    min_loss = min(losses)
+    avg_loss = sum(losses) / len(losses)
+    max_loss = max(losses)
+    
     m_step_global_step = e_step_global_step + 1
     wandb.log({
         "m_step/iteration": em_iter,
-        "m_step/prompt_loss": prompt_loss,
-        "m_step/rationale_loss": rationale_loss,
-        "m_step/combined_loss": prompt_loss + rationale_loss,
-        "m_step/prompt_structure_accuracy": prompt_structure_accuracy,
-        "m_step/rationale_structure_accuracy": rationale_structure_accuracy,
+        "m_step/loss_min": min_loss,
+        "m_step/loss_avg": avg_loss,
+        "m_step/loss_max": max_loss,
     }, step=m_step_global_step)
-    log.info(f"[WANDB] Logged M-step at step {m_step_global_step}: prompt_loss={prompt_loss:.4f}, rationale_loss={rationale_loss:.4f}")
-    log.info(f"[WANDB] Structure accuracy - prompt: {prompt_structure_accuracy:.2%}, rationale: {rationale_structure_accuracy:.2%}")
+    log.info(f"[WANDB] Logged M-step at step {m_step_global_step}: Loss - Min: {min_loss:.4f}, Avg: {avg_loss:.4f}, Max: {max_loss:.4f}")
 
 def log_iteration_summary(em_iter, m_step_global_step, num_triples):
     """Log iteration summary to wandb"""
