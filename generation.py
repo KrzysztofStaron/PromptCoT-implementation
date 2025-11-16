@@ -1,3 +1,4 @@
+import json
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
@@ -32,12 +33,12 @@ pθ = PeftModel.from_pretrained(
     subfolder=p_latest_path.rstrip("/"),
 )
 
-# Load PromptCoT-2.0-Concepts dataset
-ds = datasets.load_dataset("xl-zhao/PromptCoT-2.0-Concepts", split="train")
-
+# Load first 80 examples from PromptCoT-2.0-Concepts dataset
+ds = datasets.load_dataset("xl-zhao/PromptCoT-2.0-Concepts", split="train[:80]")
 prompts = [example["prompt"] for example in ds]
 
 BATCH_SIZE = 8
+results = []
 
 pθ.eval()
 with torch.no_grad():
@@ -60,5 +61,9 @@ with torch.no_grad():
         )
 
         texts = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        for text in texts:
-            print(text)
+        for prompt, text in zip(batch_prompts, texts):
+            results.append({"prompt": prompt, "generation": text})
+
+with open("generated_prompts.jsonl", "w", encoding="utf-8") as f:
+    for item in results:
+        f.write(json.dumps(item, ensure_ascii=False) + "\n")
