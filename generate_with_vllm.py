@@ -4,11 +4,10 @@ import datasets
 import json
 from hf_config import HF_REPO_ID, HF_P_BASE_PATH
 
-# 1. Load your model + LoRA in FP8 (max speed on H200)
+# 1. Load your model + LoRA on H200 (bf16 for compatibility)
 llm = LLM(
     model="Qwen/Qwen2.5-7B",
-    dtype="float8_e4m3fn",           # FP8 weights → fastest on H200
-    kv_cache_dtype="fp8_e5m2",       # FP8 KV cache
+    dtype="bfloat16",               # supported dtype on your vLLM version
     max_model_len=32768,
     gpu_memory_utilization=0.97,
     trust_remote_code=True,
