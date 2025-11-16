@@ -8,8 +8,22 @@ from hf_config import HF_REPO_ID, HF_P_BASE_PATH
 
 
 def main():
-    # 1. Load your model + LoRA on H200 (bf16 for compatibility)
-    # Use local path if model is pre-downloaded, otherwise HF model ID
+    # 1. Download LoRA adapters locally (vLLM doesn't support HF subfolders)
+    from huggingface_hub import snapshot_download
+    lora_hf_path = f"{HF_REPO_ID}"  # Base repo: "PanzerBread/PromptCoT"
+    lora_subfolder = f"{HF_P_BASE_PATH}latest"  # Subfolder: "coding-0.1/p/latest"
+    
+    print(f"Downloading LoRA adapters from {lora_hf_path}/{lora_subfolder}...")
+    lora_local_path = snapshot_download(
+        repo_id=lora_hf_path,
+        allow_patterns=f"{lora_subfolder}/*",
+        local_dir="/workspace/lora_cache",
+        local_dir_use_symlinks=False
+    )
+    lora_adapter_path = os.path.join(lora_local_path, lora_subfolder)
+    print(f"LoRA adapters downloaded to: {lora_adapter_path}")
+    
+    # 2. Load base model + LoRA on H200 (bf16 for compatibility)
     model_path = "/workspace/models/Qwen2.5-7B" if os.path.exists("/workspace/models/Qwen2.5-7B") else "Qwen/Qwen2.5-7B"
     llm = LLM(
         model=model_path,
@@ -23,15 +37,14 @@ def main():
         max_cpu_loras=4,
     )
 
-    # 2. Point to your LoRA on HuggingFace (same repo layout as training)
-    lora_path = f"{HF_REPO_ID}/{HF_P_BASE_PATH}latest"   # e.g. "PanzerBread/PromptCoT/coding-0.1/p/latest"
-    lora_request = LoRARequest("prompt_lora", 1, lora_path)
+    # 3. Create LoRA request with local path
+    lora_request = LoRARequest("prompt_lora", 1, lora_adapter_path)
 
-    # 3. Load dataset
+    # 4. Load dataset
     ds = datasets.load_dataset("xl-zhao/PromptCoT-2.0-Concepts", split="train[:80]")
     prompts = [example["prompt"] for example in ds]
 
-    # 4. Generation settings (same as your HF script)
+    # 5. Generation settings
     sampling_params = SamplingParams(
         temperature=0.7,
         top_p=0.9,
@@ -39,10 +52,10 @@ def main():
         skip_special_tokens=True,
     )
 
-    # 5. Generate all at once — vLLM will continuous-batch internally
+    # 6. Generate all at once — vLLM will continuous-batch internally
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
-    # 6. Save as JSONL
+    # 7. Save as JSONL
     with open("generated_prompts.jsonl", "w", encoding="utf-8") as f:
         for prompt, out in zip(prompts, outputs):
             item = {
