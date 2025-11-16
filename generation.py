@@ -1,284 +1,132 @@
-# generation.py — PROMPTCoT: Generate x (problem) from c (concepts)
-import json
 import torch
-import random
 import os
-import shutil
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi
+from dotenv import load_dotenv
+from hf_config import HF_USERNAME, HF_VERSION, HF_REPO_ID, HF_P_BASE_PATH
+import logging
 
-# Load base model
-base = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen2.5-7B-Instruct",
-    torch_dtype=torch.bfloat16,
-    device_map="auto"
+load_dotenv()
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+# Model config (same as em.py)
+MODEL_NAME = "Qwen/Qwen2.5-7B"
+PROMPT_INIT_SUBPATH = f"{HF_P_BASE_PATH}cold-start"
+
+# Find latest iteration or use cold-start
+def find_latest_iteration_from_hf():
+    """Find the latest iteration number from HuggingFace repository."""
+    if not HF_TOKEN:
+        log.warning("HF_TOKEN missing — cannot check HuggingFace for latest iteration")
+        return None
+    
+    try:
+        api = HfApi(token=HF_TOKEN)
+        files = api.list_repo_files(repo_id=HF_REPO_ID, repo_type="model", token=HF_TOKEN)
+        
+        iterations = []
+        has_cold_start = False
+        for file_path in files:
+            if PROMPT_INIT_SUBPATH in file_path:
+                has_cold_start = True
+            
+            if f"{HF_P_BASE_PATH}iter-" in file_path:
+                try:
+                    parts = file_path.split(f"{HF_P_BASE_PATH}iter-")
+                    if len(parts) > 1:
+                        iter_str = parts[1].split("/")[0]
+                        iter_num = int(iter_str)
+                        iterations.append(iter_num)
+                except (ValueError, IndexError):
+                    continue
+        
+        if iterations:
+            latest = max(iterations)
+            log.info(f"Found latest iteration {latest} on HuggingFace")
+            return latest
+        else:
+            if has_cold_start:
+                log.info("No iterations found, will load from cold-start")
+            return None
+    except Exception as e:
+        log.warning(f"Failed to check HuggingFace: {e}")
+        return None
+
+# Load prompt model (no quantization for generation)
+log.info("Loading base model for pθ (full precision)...")
+base_p = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    device_map="auto",
+    trust_remote_code=True,
+    torch_dtype=torch.bfloat16
 )
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct", padding_side='left')
+
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_NAME,
+    trust_remote_code=True,
+    padding_side='left',
+    truncation_side='left'
+)
 tokenizer.pad_token = tokenizer.eos_token
 
-# Download the "latest" subfolder from Hugging Face repo
-cache_dir = "./models/prompt_model_latest"
-if not os.path.exists(cache_dir):
-    print("Downloading promptcot-p model from Hugging Face (latest subfolder)...")
-    snapshot_download(
-        repo_id="PanzerBread/promptcot-p",
-        local_dir=cache_dir,
-        allow_patterns=["latest/**"],
-        local_dir_use_symlinks=False
+latest_iter_hf = find_latest_iteration_from_hf()
+if latest_iter_hf is not None:
+    p_latest_path = f"{HF_P_BASE_PATH}latest/"
+    log.info(f"Loading pθ adapters from {HF_REPO_ID}/{p_latest_path}...")
+    pθ = PeftModel.from_pretrained(
+        base_p,
+        HF_REPO_ID,
+        is_trainable=False,
+        subfolder=p_latest_path.rstrip("/"),
+        token=HF_TOKEN,
     )
-    # Move files from latest subfolder to the cache_dir root
-    latest_path = os.path.join(cache_dir, "latest")
-    if os.path.exists(latest_path):
-        for item in os.listdir(latest_path):
-            src = os.path.join(latest_path, item)
-            dst = os.path.join(cache_dir, item)
-            if os.path.isfile(src):
-                shutil.copy2(src, dst)
-            else:
-                if os.path.exists(dst):
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst)
-
-# Load the prompt generation model prompt_model
-# Used to generate problems from concepts
-prompt_model = PeftModel.from_pretrained(base, cache_dir, is_trainable=False)
-prompt_model.eval()
-
-# Load concept pool from mathematics_concepts dataset (more diverse)
-concepts = set()
-with open("./data/base/mathematics_concepts.jsonl") as f:
-    for line in f:
-        concepts.update(json.loads(line)["concepts"])
-        
-concepts = list(concepts)
-
-data = []
-N = 100
-BATCH_SIZE = 10
-
-# Helper function to clean and extract problem from output
-def extract_and_clean_problem(full_output, prompt, item_idx, attempt=0):
-    """Extract and clean problem from model output."""
-    # Extract problem (x) - everything after "Problem:"
-    if "Problem:" in full_output:
-        x = full_output.split("Problem:")[-1].strip()
-    else:
-        # If model didn't generate "Problem:", take everything after the prompt
-        x = full_output[len(prompt):].strip() if len(full_output) > len(prompt) else ""
-        if attempt == 0:  # Only warn on first attempt
-            print(f"Warning: Generated {item_idx+1} did not produce Problem section")
-    
-    # Clean up the problem text - remove unwanted content
-    # Remove chat-style markers first (they often appear at the start)
-    chat_markers = ["Human:", "Assistant:", "User:", "System:", "User\n", "Assistant\n"]
-    for marker in chat_markers:
-        # Check if marker appears anywhere (not just at start)
-        if marker in x:
-            # If at start, remove it and everything before it
-            if x.startswith(marker):
-                x = x[len(marker):].strip()
-            else:
-                # Otherwise, take everything before it
-                x = x.split(marker)[0].strip()
-    
-    # Stop at solution markers (we only want the problem, not the solution)
-    # Order matters - check longer patterns first
-    solution_markers = [
-        "\n\nSolution:",
-        "\n\nSolution\n",
-        "\n\nSolution ",
-        "\nSolution:",
-        "\nSolution\n",
-        "\nSolution ",
-        "\n\nAnswer:",
-        "\n\nAnswer\n",
-        "\nAnswer:",
-        "\nAnswer\n",
-        "\n\nRationale:",
-        "\nRationale:",
-        "\n\nJustification:",
-        "\nJustification:",
-        "\n\nNote:",
-        "\nNote:",
-        "Solution:",
-        "Answer:",
-        "Rationale:",
-        "Justification:",
-        "The answer is:",
-        "The answer is",
-    ]
-    for marker in solution_markers:
-        if marker in x:
-            # Find the position and check if it's not part of the problem itself
-            idx = x.find(marker)
-            # If it appears after a reasonable problem length (at least 50 chars), likely a solution
-            if idx > 50 or "\n" in x[:idx]:
-                x = x[:idx].strip()
-                break  # Found a solution marker, stop processing
-    
-    # Remove trailing markdown tables or formatting artifacts
-    if "##" in x:
-        x = x.split("##")[0].strip()
-    if "|" in x and x.count("|") > 3:  # Likely a markdown table
-        # Find the first occurrence of a table-like pattern
-        lines = x.split("\n")
-        clean_lines = []
-        for line in lines:
-            if "|" in line and line.count("|") >= 2:
-                break  # Stop at markdown table
-            clean_lines.append(line)
-        x = "\n".join(clean_lines).strip()
-    
-    # Remove common chat artifacts
-    if "Please let me know" in x:
-        x = x.split("Please let me know")[0].strip()
-    if "Let me know if" in x:
-        x = x.split("Let me know if")[0].strip()
-    
-    # Clean up: stop at any chat formatting tokens
-    if "<" in x:
-        x = x.split("<")[0].strip()
-    
-    # Only remove trailing incomplete sentences if we're very sure it's incomplete
-    # Don't truncate if it ends with LaTeX delimiters (might be mid-expression)
-    # Check if it ends with incomplete LaTeX (like "$z_" or "\\mathbb{")
-    ends_with_incomplete_latex = (
-        x.endswith("$") or 
-        x.endswith("{") or 
-        x.endswith("\\") or
-        (x.count("$") % 2 != 0) or  # Unmatched dollar signs
-        (x.count("{") > x.count("}"))  # Unmatched braces
+else:
+    log.info(f"Loading pθ adapters from cold-start: {HF_REPO_ID}/{PROMPT_INIT_SUBPATH}...")
+    pθ = PeftModel.from_pretrained(
+        base_p,
+        HF_REPO_ID,
+        is_trainable=False,
+        subfolder=PROMPT_INIT_SUBPATH,
+        token=HF_TOKEN,
     )
-    
-    if not ends_with_incomplete_latex:
-        # Only clean up if we're sure it's not LaTeX
-        if not x.endswith("}") and not x.endswith(".") and not x.endswith("?") and not x.endswith("!"):
-            # Try to find the last complete sentence, but be conservative
-            for punct in [".", "?", "!", "}"]:
-                last_punct = x.rfind(punct)
-                # Only truncate if punctuation is very close to the end (last 10%)
-                if last_punct > len(x) * 0.9:
-                    x = x[:last_punct + 1].strip()
-                    break
-    
-    # Final cleanup - remove any trailing whitespace
-    x = x.strip()
-    
-    # Fix common formatting issues
-    # Fix unmatched parentheses at the end (common error)
-    open_parens = x.count("(")
-    close_parens = x.count(")")
-    if open_parens > close_parens:
-        # Check if the problem ends with an opening parenthesis or similar
-        # Common pattern: "Round your answer to two decimal places."
-        if x.endswith(".") and "(" in x:
-            last_open = x.rfind("(")
-            if last_open > len(x) * 0.7 and ")" not in x[last_open:]:
-                # Add closing parenthesis before the period
-                x = x[:-1] + ")."
-        elif not x.endswith(")") and "(" in x:
-            last_open = x.rfind("(")
-            # If the last opening paren is near the end and no closing paren after it
-            if last_open > len(x) * 0.8 and ")" not in x[last_open:]:
-                # Add closing paren at the end if it makes sense
-                if x.endswith(".") or x.endswith("?"):
-                    # Insert before punctuation
-                    punct = x[-1]
-                    x = x[:-1] + ")" + punct
-                else:
-                    x = x + ")"
-    
-    return x
 
-# Generate in batches
-for batch_start in range(0, N, BATCH_SIZE):
-    batch_end = min(batch_start + BATCH_SIZE, N)
-    batch_size = batch_end - batch_start
-    print(f"\nProcessing batch {batch_start//BATCH_SIZE + 1}/{(N + BATCH_SIZE - 1)//BATCH_SIZE} (items {batch_start+1}-{batch_end})")
-    
-    # Prepare batch prompts
-    batch_concepts = []
-    batch_prompts = []
-    for i in range(batch_start, batch_end):
-        # Sample 3 concepts
-        c = random.sample(concepts, 3)
-        batch_concepts.append(c)
-        c_str = " | ".join(c)
-        
-        prompt = f"""Generate a math problem based on these concepts: {c_str}
+log.info("Model loaded. Generating...")
 
-Please create a hard mathematical problem that incorporates these concepts
-don't generate rationale, nor the solution, only the problem
+# User-provided data
+foundational_concepts = [
+    'Knowledge of place value and its application in multi-digit numbers',
+    'Proficiency in basic addition facts, including sums of single-digit numbers',
+    'Ability to manipulate digits within a number to form new numbers through addition',
+    'Understanding of multi-step problem-solving strategies and the ability to apply them',
+    'Development of number sense and reasoning skills, including recognizing single-digit numbers and their properties'
+]
+level = 'codeforces'
+prompt_template = 'Given the foundational programming concepts and specified difficulty level, identify connections among these concepts and develop an olympiad-level coding problem that integrates them with appropriate complexity.\n\nFoundational Programming Concepts:\n1. Knowledge of place value and its application in multi-digit numbers\n2. Proficiency in basic addition facts, including sums of single-digit numbers\n3. Ability to manipulate digits within a number to form new numbers through addition\n4. Understanding of multi-step problem-solving strategies and the ability to apply them\n5. Development of number sense and reasoning skills, including recognizing single-digit numbers and their properties\n\nDifficulty Level: codeforces'
 
-include instructions to put the final answer within \\boxed{{}}
+# Format input for prompt model (pθ format: Concepts: ... -> Rationale: ... Problem: ...)
+concepts_str = ' | '.join(foundational_concepts)
+input_text = f"Concepts: {concepts_str}\n"
 
+# Generate
+pθ.eval()
+with torch.no_grad():
+    inputs = tokenizer(input_text, return_tensors="pt").to(pθ.device)
+    outputs = pθ.generate(
+        **inputs,
+        max_new_tokens=1024,
+        do_sample=True,
+        temperature=0.7,
+        top_p=0.9,
+        pad_token_id=tokenizer.eos_token_id
+    )
 
-Problem:"""
-        batch_prompts.append(prompt)
-    
-    # Tokenize batch
-    inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True).to(prompt_model.device)
-    
-    # Generate in batch
-    with torch.no_grad():
-        output_ids = prompt_model.generate(
-            **inputs,
-            max_new_tokens=1024,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
-            eos_token_id=tokenizer.eos_token_id,
-            pad_token_id=tokenizer.eos_token_id
-        )
-    
-    # Decode and process each output
-    for batch_idx in range(batch_size):
-        i = batch_start + batch_idx
-        full_output = tokenizer.decode(output_ids[batch_idx], skip_special_tokens=True)
-        x = extract_and_clean_problem(full_output, batch_prompts[batch_idx], i)
-        
-        # Validate - ensure we have a reasonable problem
-        if len(x) < 20:
-            print(f"Warning: Generated {i+1} problem is too short ({len(x)} chars)")
-        
-        # Check for balanced LaTeX
-        dollar_count = x.count("$")
-        if dollar_count % 2 != 0:
-            print(f"Warning: Generated {i+1} has unmatched dollar signs (LaTeX)")
-        
-        # Check for balanced braces in LaTeX
-        brace_diff = x.count("{") - x.count("}")
-        if brace_diff > 2:  # Allow some difference for nested structures
-            print(f"Warning: Generated {i+1} may have unbalanced braces")
-        
-        # Only add non-empty problems
-        if x and len(x.strip()) > 0:
-            data.append({
-                "concepts": batch_concepts[batch_idx],
-                "problem": x
-            })
-            print(f"Generated {i+1}/{N}: problem length={len(x)}")
-        else:
-            print(f"Skipping {i+1}/{N}: empty problem generated")
-
-# Final save
-output_file = "synthetic_generated.txt"
-try:
-    with open(output_file, "w", encoding="utf-8") as f:
-        for item in data:
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
-    
-    # Verify file was written
-    if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        print(f"\n✅ Saved {len(data)} generated (c, x) pairs to {output_file}")
-        print(f"   File size: {file_size:,} bytes")
-        if N > len(data):
-            print(f"   Note: {N - len(data)} problems were skipped due to being empty or invalid")
-    else:
-        print(f"\n❌ ERROR: File {output_file} was not created!")
-except Exception as e:
-    print(f"\n❌ ERROR: Failed to save file {output_file}: {e}")
-    import traceback
-    traceback.print_exc()
+generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+print("\n" + "="*60)
+print("GENERATED OUTPUT:")
+print("="*60)
+print(generated_text)
+print("="*60)
