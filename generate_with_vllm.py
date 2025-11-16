@@ -2,13 +2,16 @@
 from vllm import LLM, SamplingParams
 import datasets
 import json
+import os
 from hf_config import HF_REPO_ID, HF_P_BASE_PATH
 
 
 def main():
     # 1. Load your model + LoRA on H200 (bf16 for compatibility)
+    # Use local path if model is pre-downloaded, otherwise HF model ID
+    model_path = "/workspace/models/Qwen2.5-7B" if os.path.exists("/workspace/models/Qwen2.5-7B") else "Qwen/Qwen2.5-7B"
     llm = LLM(
-        model="Qwen/Qwen2.5-7B",
+        model=model_path,
         dtype="bfloat16",               # supported dtype on your vLLM version
         max_model_len=32768,
         gpu_memory_utilization=0.97,
