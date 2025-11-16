@@ -1,5 +1,6 @@
 # generate_with_vllm.py
 from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
 import datasets
 import json
 import os
@@ -24,7 +25,7 @@ def main():
 
     # 2. Point to your LoRA on HuggingFace (same repo layout as training)
     lora_path = f"{HF_REPO_ID}/{HF_P_BASE_PATH}latest"   # e.g. "PanzerBread/PromptCoT/coding-0.1/p/latest"
-    llm.set_lora_path("latest", lora_path)               # "latest" is an arbitrary LoRA name
+    lora_request = LoRARequest("prompt_lora", 1, lora_path)
 
     # 3. Load dataset
     ds = datasets.load_dataset("xl-zhao/PromptCoT-2.0-Concepts", split="train[:80]")
@@ -39,7 +40,7 @@ def main():
     )
 
     # 5. Generate all at once — vLLM will continuous-batch internally
-    outputs = llm.generate(prompts, sampling_params, lora_path="latest")
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     # 6. Save as JSONL
     with open("generated_prompts.jsonl", "w", encoding="utf-8") as f:
