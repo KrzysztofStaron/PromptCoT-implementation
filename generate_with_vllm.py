@@ -68,7 +68,7 @@ def main():
     prompts = []
 
     for ex in ds:
-        prompt = f"Concepts: {' | '.join(ex['foundational_concepts'])}"
+        prompt = f"Concepts: {' | '.join(ex['foundational_concepts'])}Rationale:"
         prompts.append(SYSTEM_PROMPT + "\n\n" + prompt)
 
     sampling_params = SamplingParams(
@@ -89,7 +89,7 @@ def main():
     # 7. Save + print a quick summary
     good = 0
     with open("generated_clean_problems.jsonl", "w", encoding="utf-8") as f:
-        for prompt, out in zip(raw_prompts, outputs):
+        for prompt, out in zip(prompts, outputs):
             text = out.outputs[0].text.strip()
             clean_problem = extract_clean_problem(text)
             is_clean = "Rationale" not in clean_problem and len(clean_problem) > 500
