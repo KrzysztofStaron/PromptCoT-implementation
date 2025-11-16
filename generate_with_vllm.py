@@ -47,7 +47,7 @@ def main():
 
     # 5. Generation settings
     sampling_params = SamplingParams(
-        temperature=0.7,
+        temperature=0.2,
         top_p=0.9,
         max_tokens=1024,
         skip_special_tokens=True,
