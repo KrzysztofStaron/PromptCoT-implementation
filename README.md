@@ -98,20 +98,17 @@ reward = log_p_z + log_p_x
 
 ✅ **Completed:**
 
-- Seed data generation (253 triples from AIME 2024/2025)
+- Seed data generation
 - LoRA fine-tuning infrastructure
 - Rationale model (qφ) deployed to HuggingFace
 - Prompt model (pθ) deployed to HuggingFace
-
-🔄 **In Progress:**
-
 - EM loop with reward-based selection
 
 ⏳ **Planned:**
 
 - Self-play / SFT implementation
 
-## Running the Cold-Start Training
+## Training your own prompt synthesis model:
 
 The cold-start script fine-tunes both models on the seed dataset:
 
@@ -121,11 +118,22 @@ python cold_start.py
 
 This will:
 
-1. Load Qwen2.5-7B-Instruct base model
-2. Apply LoRA adapters (r=64, lora_alpha=16)
-3. Train rationale model on (concepts, problem) → rationale pairs
-4. Train prompt model on (concepts, rationale) → problem pairs
-5. Upload models to HuggingFace Hub (if `HF_TOKEN` is set)
+1. Load Qwen2.5-7B base model
+2. Train rationale model on (concepts, problem) → rationale pairs
+3. Train prompt model on (concepts, rationale) → problem pairs
+4. Upload models to HuggingFace Hub (if `HF_TOKEN` is set)
+
+```bash
+python em.py
+```
+
+This will:
+Run the EM (Expectation-Maximization) loop to iteratively improve the synthetic dataset generation:
+
+- **E-step**: Generate multiple rationales per problem, compute rewards, select best rationale
+- **M-step**: Fine-tune pθ and qφ models on selected triples
+- Uploads checkpoints to HuggingFace after each iteration
+- Supports resume from latest checkpoint
 
 **Requirements**: See `requirements.txt`
 
