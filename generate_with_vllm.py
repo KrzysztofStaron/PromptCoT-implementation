@@ -60,7 +60,6 @@ def main():
     with open("generated_prompts.jsonl", "w", encoding="utf-8") as f:
         for prompt, out in zip(prompts, outputs):
             item = {
-                "prompt": prompt,
                 "generation": out.outputs[0].text,
             }
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
