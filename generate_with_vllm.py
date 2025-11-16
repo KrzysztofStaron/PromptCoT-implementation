@@ -35,6 +35,7 @@ def main():
         enable_lora=True,
         max_loras=1,
         max_cpu_loras=4,
+        max_lora_rank=128,              # match your LoRA adapters' rank
     )
 
     # 3. Create LoRA request with local path
