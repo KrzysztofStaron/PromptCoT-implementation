@@ -95,7 +95,7 @@ class VLLMGenerator(BaseGenerator):
             raise RuntimeError(f"Failed to initialize vLLM: {e}")
 
     def generate(self, prompts):
-        outputs = self.llm.generate(prompts, self.sampling_params, use_tqdm=False)
+        outputs = self.llm.generate(prompts, self.sampling_params, use_tqdm=True)
         return [output.outputs[0].text for output in outputs]
 
 class TransformersGenerator(BaseGenerator):
@@ -170,6 +170,10 @@ def main(max_problems=None, output_file="generated_problems.jsonl", batch_size=1
                 break
 
             batch_data.append(example)
+
+            # Add this to see it collecting data
+            if len(batch_data) % 50 == 0:
+                print(f"Collecting batch: {len(batch_data)}/{batch_size}...", end='\r')
 
             # Process batch when full or at the end
             if len(batch_data) >= batch_size:
