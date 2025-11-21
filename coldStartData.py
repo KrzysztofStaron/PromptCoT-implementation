@@ -19,7 +19,40 @@ import os
 from datasets import load_dataset
 import torch
 
+# Conditional imports for different backends
+try:
+    from vllm import LLM, SamplingParams
+    VLLM_AVAILABLE = True
+except ImportError:
+    VLLM_AVAILABLE = False
+
+try:
+    from unsloth import FastLanguageModel
+    UNSLOTH_AVAILABLE = True
+except ImportError:
+    UNSLOTH_AVAILABLE = False
+
+try:
+    from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+
 MODEL_NAME = "xl-zhao/PromptCoT-2.0-Prompt-Generation-Model"
+
+# Force structured output with mandatory detailed rationale
+PROMPT_SUFFIX = """
+
+Output strictly in the following format:
+
+Rationale:
+<your detailed step-by-step reasoning here – explain exactly how you connected ALL the given concepts, why the combination is novel/difficult, and how the problem tests deep understanding of each concept. Be extremely thorough.>
+
+Problem Title:
+<a concise, creative title>
+
+Problem Statement:
+<the full problem – make it worthy of Codeforces 2800+ rating>"""
 
 class BaseGenerator:
     def __init__(self, model_name):
@@ -31,9 +64,9 @@ class BaseGenerator:
 class VLLMGenerator(BaseGenerator):
     def __init__(self, model_name):
         super().__init__(model_name)
+        if not VLLM_AVAILABLE:
+            raise ImportError("vLLM not available")
         try:
-            from vllm import LLM, SamplingParams
-            import torch
             
             num_gpus = torch.cuda.device_count()
             print(f"VLLM: Detected {num_gpus} GPUs. Enabling Tensor Parallelism.")
@@ -55,8 +88,9 @@ class VLLMGenerator(BaseGenerator):
                 enforce_eager=False
             )
             self.sampling_params = SamplingParams(
-                temperature=0.7,
-                max_tokens=4096,
+                temperature=0.8,      # ↑ from 0.7 – gives much better reasoning length/quality
+                top_p=0.95,
+                max_tokens=8192,       # safe for long rationales + huge problems
                 skip_special_tokens=True
             )
             print("Initialized vLLM backend.")
@@ -72,8 +106,9 @@ class VLLMGenerator(BaseGenerator):
 class UnslothGenerator(BaseGenerator):
     def __init__(self, model_name):
         super().__init__(model_name)
+        if not UNSLOTH_AVAILABLE:
+            raise ImportError("Unsloth not available")
         try:
-            from unsloth import FastLanguageModel
             self.model, self.tokenizer = FastLanguageModel.from_pretrained(
                 model_name=model_name,
                 max_seq_length=32768,
@@ -88,15 +123,14 @@ class UnslothGenerator(BaseGenerator):
             raise RuntimeError(f"Failed to initialize Unsloth: {e}")
 
     def generate(self, prompts):
-        from transformers import TextStreamer
         
         results = []
         for prompt in prompts:
             inputs = self.tokenizer([prompt], return_tensors="pt").to("cuda")
             outputs = self.model.generate(
-                **inputs, 
-                max_new_tokens=4096, 
-                temperature=0.7,
+                **inputs,
+                max_new_tokens=4096,
+                temperature=0.8,
                 use_cache=True
             )
             results.append(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
@@ -105,8 +139,9 @@ class UnslothGenerator(BaseGenerator):
 class TransformersGenerator(BaseGenerator):
     def __init__(self, model_name):
         super().__init__(model_name)
+        if not TRANSFORMERS_AVAILABLE:
+            raise ImportError("Transformers not available")
         try:
-            from transformers import AutoModelForCausalLM, AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name, 
@@ -121,7 +156,7 @@ class TransformersGenerator(BaseGenerator):
         results = []
         for prompt in prompts:
             inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-            outputs = self.model.generate(**inputs, max_new_tokens=4096, temperature=0.7)
+            outputs = self.model.generate(**inputs, max_new_tokens=4096, temperature=0.8)
             results.append(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
         return results
 
@@ -184,7 +219,7 @@ def main(max_problems=None, output_file="generated_problems.jsonl", batch_size=1
     print(f"Successfully generated {generated_count} problems and saved to {output_file}")
 
 def _process_batch(generator, batch_data, file_handle):
-    prompts = [ex['prompt'] for ex in batch_data]
+    prompts = [ex['prompt'] + PROMPT_SUFFIX for ex in batch_data]
     
     try:
         generated_texts = generator.generate(prompts)
@@ -208,15 +243,13 @@ if __name__ == "__main__":
     parser.add_argument("--output_file", type=str, default="generated_problems.jsonl",
                        help="Output file path")
     parser.add_argument("--batch_size", type=int, default=1,
-                       help="Batch size for generation (higher is better for vLLM)")
+                       help="Batch size for generation (2048-3072 recommended for vLLM on 4x RTX 5090)")
 
     args = parser.parse_args()
     
     # Auto-adjust batch size for vLLM if default is used
     if args.batch_size == 1:
         try:
-            import vllm
-            import torch
             num_gpus = torch.cuda.device_count()
             
             # 4x5090 with fp8 KV cache -> 2048 is conservative and blazing fast
