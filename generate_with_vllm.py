@@ -86,7 +86,7 @@ def main():
     print(f"Generating {len(prompts)} problems with exorcism mode enabled...")
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
-    # 7. Save + print a quick summary
+    # 7. Save + print a quick summ
     good = 0
     with open("generated_clean_problems.jsonl", "w", encoding="utf-8") as f:
         for prompt, out in zip(prompts, outputs):
@@ -103,7 +103,7 @@ def main():
                 "is_perfect": is_clean
             }
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
-
+ge
     print(f"\nDone! Generated {len(outputs)} problems.")
     print(f"Approximately {good} look clean and high-quality (you'll still want to cherry-pick the gems).")
     print("Check generated_clean_problems.jsonl – the real Div.1 diamonds are in there.")

@@ -1,0 +1,101 @@
+% ==================================================================
+%                       Basic Settings
+% ==================================================================
+\newcommand{\minisection}[1]{\noindent{\textbf{#1.}}}
+
+\newcommand{\specialcell}[2][c]{%
+  \begin{tabular}[#1]{@{}c@{}}#2\end{tabular}}
+
+\newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}
+
+\newcommand*\justify{%
+  \fontdimen2\font=0.4em% interword space
+  \fontdimen3\font=0.2em% interword stretch
+  \fontdimen4\font=0.1em% interword shrink
+  \fontdimen7\font=0.1em% extra space
+  \hyphenchar\font=`\-% allowing hyphenation
+}
+
+\renewcommand{\texttt}[1]{%
+  \begingroup
+  \ttfamily
+  \begingroup\lccode`~=`/\lowercase{\endgroup\def~}{/\discretionary{}{}{}}%
+  \begingroup\lccode`~=`[\lowercase{\endgroup\def~}{[\discretionary{}{}{}}%
+  \begingroup\lccode`~=`.\lowercase{\endgroup\def~}{.\discretionary{}{}{}}%
+  \catcode`/=\active\catcode`[=\active\catcode`.=\active
+  \justify\scantokens{#1\noexpand}%
+  \endgroup
+}
+
+\renewcommand{\vec}[1]{\boldsymbol{#1}}    % re-define vec command
+
+% ==================================================================
+%                       math Packages
+% ==================================================================
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}                               % blackboard math symbols
+\usepackage{amsthm}
+\usepackage[mathcal]{eucal}
+\usepackage{mathrsfs}
+\usepackage{bm}                                     % bm command
+\usepackage{blkarray}                               % to support matrix
+\usepackage{nicefrac}                               % compact symbols for 1/2, etc.
+
+% ==================================================================
+%                       subfigure Packages
+% ==================================================================
+\usepackage{wrapfig}
+\usepackage{graphicx}                               % include pdf figures
+\renewcommand\thesubfigure{(\alph{subfigure})}      % "Fig.~1b"-->"Fig.1(b)"
+\usepackage{caption}
+\captionsetup[table]{skip=2pt}
+% \captionsetup{labelsep=space}
+% \captionsetup[subfigure]{labelformat=simple}        % avoid "double brackets" in sub-figure caption
+\usepackage{cleveref}
+% \Crefformat{figure}{Fig.~#2#1#3}                    % "Fig.", instead of "Figure"
+% \Crefname{subfigure}{Fig.}{Figs.}
+% \Crefname{figure}{Fig.}{Figs.}
+% \Crefformat{table}{TABLE~#2#1#3}                    % "TABLE", instead of "Table"
+
+% ==================================================================
+%                         tikz Packages
+% ==================================================================
+\usepackage{tikz}                                          
+\usepackage{circuitikz}
+\usetikzlibrary{patterns,snakes}
+\usetikzlibrary{positioning,calc,fit,decorations.pathmorphing,shapes.geometric, shapes.gates.logic.US, calc}
+\usetikzlibrary{arrows,arrows.meta,decorations.markings,shapes,shapes.arrows}
+\usetikzlibrary{decorations,decorations.pathreplacing}
+\usetikzlibrary{backgrounds}
+\usepackage{filecontents}                           % support to pgfplots
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\usepgfplotslibrary{groupplots}
+\usepackage{scalefnt}
+\pgfplotsset{compat=newest}
+% =============================================================
+%              page size setting 
+% =============================================================
+\iffalse
+\paperwidth   = 8.5in                                      % US Letter
+\paperheight  = 11.0in
+%\paperwidth  = 8.26in                                     % A4
+%\paperheight = 11.69in
+\usepackage[top=0.80in,bottom=0.88in,left=0.63in,right=0.63in]{geometry}
+\linespread{1.00}
+\setlength{\columnsep}{20pt}                               % set space between columns
+\setlength{\textfloatsep}{10pt plus 1pt minus 1pt}         % set space between float and text
+\setlength{\floatsep}{10pt plus 1pt minus 1pt}             % set space between two floats
+\setlength{\intextsep}{4pt plus 1pt minus 1pt}             % set space between text and float
+\setlength{\abovecaptionskip}{2pt}                         % set space between figure and caption
+\setlength{\belowcaptionskip}{2pt}                         % set space between figure and caption
+% ==== reduce space around equations
+\setlength{\belowdisplayskip}{4pt} \setlength{\belowdisplayshortskip}{4pt}
+\setlength{\abovedisplayskip}{4pt} \setlength{\abovedisplayshortskip}{4pt}
+% ==== reduce section and subsection title spacing
+\newcommand{\subparagraph}{}
+\usepackage{titlesec}
+\titlespacing*{\section}{0pt}{1.8ex plus .2ex minus .2ex}{0.4ex plus .2ex}
+\titlespacing*{\subsection}{0pt}{1.0ex plus .2ex minus .2ex}{0.2ex plus .2ex}
+\fi

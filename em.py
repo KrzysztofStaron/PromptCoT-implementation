@@ -50,6 +50,15 @@ BATCH_SIZE = 16
 USE_GROQ_TIEBREAKER = False
 GRADIENT_ACCUMULATION_STEPS = 10  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps
 
+# === GENERATION CONFIG ===
+# Generation parameters for rationale and problem generation
+RATIONALE_MAX_NEW_TOKENS = 512  # Max tokens for rationale generation (E-step)
+PROBLEM_MAX_NEW_TOKENS = 1024   # Max tokens for problem generation
+GENERATION_TEMPERATURE = 0.7    # Temperature for sampling
+GENERATION_TOP_P = 0.9         # Top-p for nucleus sampling
+STRUCTURE_CHECK_MAX_TOKENS = 512  # Max tokens for structure accuracy check
+MAX_SEQUENCE_LENGTH = 1024      # Max sequence length for tokenization/truncation
+
 # === SAMPLING SCHEDULE ===
 def get_k_samples_for_iteration(iter_num_1_indexed: int) -> int:
     """
@@ -321,7 +330,7 @@ def batched_e_step(qφ, batch_c, batch_x, num_samples):
     torch.cuda.empty_cache()
     
     input_texts = [f"Concepts: {' | '.join(c)}\nProblem: {x}\nRationale:" for c, x in zip(batch_c, batch_x)]
-    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=1024).to(qφ.device)
+    inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQUENCE_LENGTH).to(qφ.device)
 
     qφ.eval()
     with torch.no_grad():
@@ -331,10 +340,10 @@ def batched_e_step(qφ, batch_c, batch_x, num_samples):
         
         outputs = qφ.generate(
             **inputs,
-            max_new_tokens=512,  # Reduced from 1024 to avoid OOM
+            max_new_tokens=RATIONALE_MAX_NEW_TOKENS,
             do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
+            temperature=GENERATION_TEMPERATURE,
+            top_p=GENERATION_TOP_P,
             num_return_sequences=num_samples,
             pad_token_id=tokenizer.eos_token_id,
             return_dict_in_generate=True,
@@ -397,10 +406,10 @@ def compute_structure_accuracy(model, tokenizer, triples, model_type="prompt", s
             # Generate
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=512,
+                max_new_tokens=STRUCTURE_CHECK_MAX_TOKENS,
                 do_sample=True,
-                temperature=0.7,
-                top_p=0.9,
+                temperature=GENERATION_TEMPERATURE,
+                top_p=GENERATION_TOP_P,
                 pad_token_id=tokenizer.eos_token_id
             )
             
@@ -435,7 +444,7 @@ def m_step(model, triples, mode, em_iter_0_indexed):
                f"Concepts: {' | '.join(t['concepts'])}\nProblem: {t['problem']}\nRationale: {t['rationale']}"
         texts.append({"text": text})
     
-    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=1024), batched=True)
+    ds = Dataset.from_list(texts).map(lambda x: tokenizer(x["text"], truncation=True, max_length=MAX_SEQUENCE_LENGTH), batched=True)
 
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
