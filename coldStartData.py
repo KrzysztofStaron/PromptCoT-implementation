@@ -57,6 +57,9 @@ class VLLMGenerator(BaseGenerator):
         if not VLLM_AVAILABLE:
             raise ImportError("vLLM not available")
         try:
+            # Set VLLM specific environment variables for 4x RTX 5090
+            os.environ["NCCL_DEBUG"] = "INFO"
+            os.environ["VLLM_FLASH_ATTN_VERSION"] = "2"
             
             num_gpus = torch.cuda.device_count()
             print(f"VLLM: Detected {num_gpus} GPUs. Enabling Tensor Parallelism.")
@@ -76,7 +79,8 @@ class VLLMGenerator(BaseGenerator):
                 # Reduced slightly from 0.98 to avoid OOM on startup
                 gpu_memory_utilization=0.95,
                 max_model_len=32768,
-                enforce_eager=False
+                enforce_eager=True,
+                disable_custom_all_reduce=True,
             )
             self.sampling_params = SamplingParams(
                 temperature=0.8,      # ↑ from 0.7 – gives much better reasoning length/quality
@@ -111,11 +115,18 @@ class TransformersGenerator(BaseGenerator):
             raise RuntimeError(f"Failed to initialize Transformers: {e}")
 
     def generate(self, prompts):
-        results = []
-        for prompt in prompts:
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-            outputs = self.model.generate(**inputs, max_new_tokens=4096, temperature=0.8)
-            results.append(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
+        inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.model.device)
+        outputs = self.model.generate(
+            **inputs,
+            max_new_tokens=4096,
+            temperature=0.8,
+            do_sample=True,
+            top_p=0.95,
+            pad_token_id=self.tokenizer.eos_token_id
+        )
+        # Decode only the generated tokens (safer than string slicing)
+        generated_ids = outputs[:, inputs.input_ids.shape[1]:]
+        results = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         return results
 
 def get_best_generator(model_name):
@@ -135,6 +146,10 @@ def main(max_problems=None, output_file="generated_problems.jsonl", batch_size=1
 
     # Initialize generator
     generator = get_best_generator(MODEL_NAME)
+    
+    if isinstance(generator, TransformersGenerator) and batch_size > 32:
+        print(f"Transformers backend detected with large batch size ({batch_size}). Reducing to 32 to prevent OOM.")
+        batch_size = 32
 
     generated_count = 0
 
