@@ -150,10 +150,19 @@ def main(max_problems=None, output_file="generated_problems.jsonl", batch_size=1
     generator = get_best_generator(MODEL_NAME)
 
     generated_count = 0
-    
+
+    # Check if output file exists and count existing entries for resuming
+    if os.path.exists(output_file):
+        with open(output_file, 'r', encoding='utf-8') as f:
+            existing_count = sum(1 for _ in f)
+        print(f"Found existing file with {existing_count} entries. Resuming from entry {existing_count}...")
+        generated_count = existing_count
+        # Skip already processed entries
+        dataset = dataset.skip(existing_count)
+
     batch_data = []
-    
-    with open(output_file, 'w', encoding='utf-8') as f:
+
+    with open(output_file, 'a', encoding='utf-8') as f:
         for i, example in enumerate(dataset):
             if max_problems and generated_count >= max_problems:
                 break
