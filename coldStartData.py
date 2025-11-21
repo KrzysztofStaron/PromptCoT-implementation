@@ -207,7 +207,7 @@ if __name__ == "__main__":
                 num_gpus = torch.cuda.device_count()
                 
                 # 4x5090 with fp8 KV cache -> 2048 is conservative and blazing fast
-                args.batch_size = 2048
+                args.batch_size = 128
                 print(f"4x RTX 5090 detected -> auto batch size = {args.batch_size} (very safe & max throughput)")
         except ImportError:
             pass
