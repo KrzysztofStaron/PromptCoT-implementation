@@ -41,9 +41,6 @@ Output strictly in the following format:
 Rationale:
 <your detailed step-by-step reasoning here – explain exactly how you connected ALL the given concepts, why the combination is novel/difficult, and how the problem tests deep understanding of each concept. Be extremely thorough.>
 
-Problem Title:
-<a concise, creative title>
-
 Problem Statement:
 <the full problem – make it worthy of Codeforces 2800+ rating>"""
 
@@ -70,11 +67,11 @@ class VLLMGenerator(BaseGenerator):
                 tensor_parallel_size=num_gpus,
                 
                 # Critical optimization for 4x RTX 5090:
-                kv_cache_dtype="fp8_e5m2",       # Drops KV cache memory ~4x vs fp16
-                block_size=32,                   # Blackwell architecture sweet spot
-                enable_chunked_prefill=True,     # Allows huge prefill batches
-                max_num_batched_tokens=65536,    # 64k tokens per iteration
-                max_num_seqs=4096,               # Max concurrent sequences
+                # kv_cache_dtype="fp8_e5m2",       # Drops KV cache memory ~4x vs fp16
+                # block_size=32,                   # Blackwell architecture sweet spot
+                # enable_chunked_prefill=True,     # Allows huge prefill batches
+                # max_num_batched_tokens=65536,    # 64k tokens per iteration
+                # max_num_seqs=4096,               # Max concurrent sequences
                 
                 # Reduced slightly from 0.98 to avoid OOM on startup
                 gpu_memory_utilization=0.95,
