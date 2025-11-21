@@ -6,8 +6,7 @@ coding problems using the PromptCoT-2.0-Prompt-Generation-Model.
 
 It automatically detects and uses the best available backend:
 1. vLLM (Fastest, best for batching)
-2. Unsloth (Fast inference)
-3. Transformers (Fallback)
+2. Transformers (Fallback)
 
 Usage:
     python coldStartData.py --max_problems 100 --output_file generated_problems.jsonl --batch_size 10
@@ -16,15 +15,6 @@ Usage:
 import json
 import argparse
 import os
-
-# IMPORTANT: Unsloth must be imported before other libraries to patch correctly
-# We try to import it very early, even if we might not use it if vLLM works
-try:
-    from unsloth import FastLanguageModel
-    UNSLOTH_AVAILABLE = True
-except ImportError:
-    UNSLOTH_AVAILABLE = False
-
 from datasets import load_dataset
 import torch
 
@@ -36,7 +26,7 @@ except ImportError:
     VLLM_AVAILABLE = False
 
 try:
-    from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
+    from transformers import AutoModelForCausalLM, AutoTokenizer
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
@@ -107,39 +97,6 @@ class VLLMGenerator(BaseGenerator):
         outputs = self.llm.generate(prompts, self.sampling_params, use_tqdm=False)
         return [output.outputs[0].text for output in outputs]
 
-class UnslothGenerator(BaseGenerator):
-    def __init__(self, model_name):
-        super().__init__(model_name)
-        if not UNSLOTH_AVAILABLE:
-            raise ImportError("Unsloth not available")
-        try:
-            self.model, self.tokenizer = FastLanguageModel.from_pretrained(
-                model_name=model_name,
-                max_seq_length=32768,
-                dtype=None,
-                load_in_4bit=False, # Use full precision or bf16 if available
-            )
-            FastLanguageModel.for_inference(self.model)
-            print("Initialized Unsloth backend.")
-        except ImportError:
-            raise ImportError("Unsloth not available")
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize Unsloth: {e}")
-
-    def generate(self, prompts):
-        
-        results = []
-        for prompt in prompts:
-            inputs = self.tokenizer([prompt], return_tensors="pt").to("cuda")
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=4096,
-                temperature=0.8,
-                use_cache=True
-            )
-            results.append(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
-        return results
-
 class TransformersGenerator(BaseGenerator):
     def __init__(self, model_name):
         super().__init__(model_name)
@@ -170,12 +127,6 @@ def get_best_generator(model_name):
         return VLLMGenerator(model_name)
     except (ImportError, RuntimeError) as e:
         print(f"vLLM skipped: {e}")
-
-    # Try Unsloth second
-    try:
-        return UnslothGenerator(model_name)
-    except (ImportError, RuntimeError) as e:
-        print(f"Unsloth skipped: {e}")
 
     # Fallback to Transformers
     return TransformersGenerator(model_name)
