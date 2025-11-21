@@ -16,6 +16,15 @@ Usage:
 import json
 import argparse
 import os
+
+# IMPORTANT: Unsloth must be imported before other libraries to patch correctly
+# We try to import it very early, even if we might not use it if vLLM works
+try:
+    from unsloth import FastLanguageModel
+    UNSLOTH_AVAILABLE = True
+except ImportError:
+    UNSLOTH_AVAILABLE = False
+
 from datasets import load_dataset
 import torch
 
@@ -25,12 +34,6 @@ try:
     VLLM_AVAILABLE = True
 except ImportError:
     VLLM_AVAILABLE = False
-
-try:
-    from unsloth import FastLanguageModel
-    UNSLOTH_AVAILABLE = True
-except ImportError:
-    UNSLOTH_AVAILABLE = False
 
 try:
     from transformers import AutoModelForCausalLM, AutoTokenizer, TextStreamer
@@ -83,7 +86,8 @@ class VLLMGenerator(BaseGenerator):
                 max_num_batched_tokens=65536,    # 64k tokens per iteration
                 max_num_seqs=4096,               # Max concurrent sequences
                 
-                gpu_memory_utilization=0.98,
+                # Reduced slightly from 0.98 to avoid OOM on startup
+                gpu_memory_utilization=0.95,
                 max_model_len=32768,
                 enforce_eager=False
             )
@@ -250,11 +254,13 @@ if __name__ == "__main__":
     # Auto-adjust batch size for vLLM if default is used
     if args.batch_size == 1:
         try:
-            num_gpus = torch.cuda.device_count()
-            
-            # 4x5090 with fp8 KV cache -> 2048 is conservative and blazing fast
-            args.batch_size = 2048
-            print(f"4x RTX 5090 detected -> auto batch size = {args.batch_size} (very safe & max throughput)")
+            # Simple check without importing full vLLM if not needed
+            if torch.cuda.is_available():
+                num_gpus = torch.cuda.device_count()
+                
+                # 4x5090 with fp8 KV cache -> 2048 is conservative and blazing fast
+                args.batch_size = 2048
+                print(f"4x RTX 5090 detected -> auto batch size = {args.batch_size} (very safe & max throughput)")
         except ImportError:
             pass
 
