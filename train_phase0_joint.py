@@ -85,7 +85,7 @@ def main():
     # 2. Add LoRA Adapters (QLoRA with 4-bit base + FULL training of embeddings/head)
     model = FastLanguageModel.get_peft_model(
         model,
-        r=128, # Higher rank = more capacity (closer to full fine-tuning)
+        r=64, # Higher rank = more capacity (closer to full fine-tuning)
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
                         "gate_proj", "up_proj", "down_proj"],  # LoRA on transformer layers
         lora_alpha=64,  # Doubled to match higher rank
