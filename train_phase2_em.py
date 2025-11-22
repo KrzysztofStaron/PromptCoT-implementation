@@ -24,8 +24,6 @@ from huggingface_hub import HfApi, create_repo, snapshot_download
 from dotenv import load_dotenv
 import wandb
 from trl import SFTTrainer
-from vllm import LLM, SamplingParams
-from vllm.lora.request import LoRARequest
 from hf_config import HF_REPO_ID, HF_VERSION
 
 load_dotenv()
@@ -178,42 +176,61 @@ def load_initial_triples():
 # --- Helper Functions ---
 
 def run_e_step_generation(triples, k, current_q_subfolder):
-    """Run E-Step: Generate Rationales using q_phi (vLLM)."""
+    """Run E-Step: Generate Rationales using q_phi (Unsloth)."""
     print("E-Step: Generating Rationales...")
     
-    # Prepare prompts for vLLM: "Concepts: {c}\nProblem: {x}\nRationale:"
-    vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
+    # Load model with Unsloth
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        MODEL_NAME,
+        max_seq_length=MAX_SEQ_LENGTH,
+        dtype=DTYPE,
+        load_in_4bit=LOAD_IN_4BIT,
+        token=HF_TOKEN
+    )
     
-    # Generate with vLLM (restart each iteration to pick up new LoRA adapters)
-    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128, gpu_memory_utilization=0.9) 
-    
-    # Download adapter from HF if not available locally
-    if not os.path.exists(current_q_subfolder):
-         print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
-         try:
-             q_adapter_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*")
-             q_adapter_path = os.path.join(q_adapter_path, current_q_subfolder)
-         except Exception as e:
-             print(f"Warning: Could not download {current_q_subfolder}: {e}")
-             q_adapter_path = current_q_subfolder
+    # Load adapter
+    adapter_path = None
+    if os.path.exists(current_q_subfolder):
+        adapter_path = current_q_subfolder
     else:
-         q_adapter_path = current_q_subfolder
+        print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
+        try:
+            downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*", token=HF_TOKEN)
+            adapter_path = os.path.join(downloaded_path, current_q_subfolder)
+        except Exception as e:
+            print(f"Warning: Could not download {current_q_subfolder}: {e}")
+            adapter_path = current_q_subfolder
     
-    lora_req = LoRARequest("q_adapter", 1, q_adapter_path)
+    if adapter_path and os.path.exists(adapter_path):
+        model.load_adapter(adapter_path)
     
-    # Paper uses temperature 1.0 for E-step sampling
-    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
+    FastLanguageModel.for_inference(model)
     
-    outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
-    
-    # Collect candidates: triples[i] -> [z1, z2, ..., zk]
+    # Generate k samples for each triple
     candidates = []
-    for output in outputs:
-        z_list = [o.text.strip() for o in output.outputs] 
+    for t in triples:
+        prompt = f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:"
+        z_list = []
+        for _ in range(k):
+            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=768,
+                temperature=1.0,
+                top_p=0.95,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+            generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            rationale = generated_text.split("Rationale:")[-1].strip()
+            # Stop at Problem: if it appears
+            if "\nProblem:" in rationale:
+                rationale = rationale.split("\nProblem:")[0].strip()
+            z_list.append(rationale)
         candidates.append(z_list)
-        
-    # Clean up vLLM to free VRAM for M-step training
-    del llm
+    
+    # Cleanup
+    del model
     gc.collect()
     torch.cuda.empty_cache()
     
@@ -320,8 +337,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         gradient_accumulation_steps=2,  # Effective batch size = 64 * 2 = 128
         num_train_epochs=1, # Plan requirement
         learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
-        fp16=True,  # Force fp16 to avoid dtype mismatch with LoRA weights
-        bf16=False,  # Disable bf16 to prevent dtype conflicts
+        fp16=False,  # Disable fp16 - model is in bfloat16
+        bf16=True,  # Use bf16 to match model dtype
         output_dir=output_path,
         optim="adamw_8bit",
         report_to="wandb",
@@ -368,47 +385,62 @@ def run_e_step_update(new_triples, current_q_subfolder, iteration):
     return next_q_path
 
 def generate_m_step_data(triples, updated_q_subfolder):
-    """Generate deterministic rationales for M-step using updated q_phi."""
+    """Generate deterministic rationales for M-step using updated q_phi (Unsloth)."""
     print("M-Step Prep: Generating deterministic rationales...")
     
-    # Use the same generation logic but with temp=0
-    # We need to load the just-updated q_phi
+    # Load model with Unsloth
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        MODEL_NAME,
+        max_seq_length=MAX_SEQ_LENGTH,
+        dtype=DTYPE,
+        load_in_4bit=LOAD_IN_4BIT,
+        token=HF_TOKEN
+    )
     
-    # Prepare prompts
-    vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
-    
-    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128, gpu_memory_utilization=0.9)
-    
-    # Check if updated adapter exists locally (it should, we just trained it)
-    # If not (e.g. remote only), download it
-    if not os.path.exists(updated_q_subfolder):
-         print(f"Downloading adapter from {HF_REPO_ID} subfolder {updated_q_subfolder}...")
-         try:
-             q_adapter_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{updated_q_subfolder}/*")
-             q_adapter_path = os.path.join(q_adapter_path, updated_q_subfolder)
-         except Exception as e:
-             # Fallback to string path if it's actually a HF path
-             q_adapter_path = updated_q_subfolder
+    # Load adapter
+    adapter_path = None
+    if os.path.exists(updated_q_subfolder):
+        adapter_path = updated_q_subfolder
     else:
-         q_adapter_path = updated_q_subfolder
-         
-    lora_req = LoRARequest("q_adapter_new", 1, q_adapter_path)
+        print(f"Downloading adapter from {HF_REPO_ID} subfolder {updated_q_subfolder}...")
+        try:
+            downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{updated_q_subfolder}/*", token=HF_TOKEN)
+            adapter_path = os.path.join(downloaded_path, updated_q_subfolder)
+        except Exception as e:
+            print(f"Warning: Could not download {updated_q_subfolder}: {e}")
+            adapter_path = updated_q_subfolder
     
-    # Deterministic generation
-    params = SamplingParams(n=1, temperature=0.0, max_tokens=768, stop=["\nProblem:", "Problem:"])
+    if adapter_path and os.path.exists(adapter_path):
+        model.load_adapter(adapter_path)
     
-    outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
+    FastLanguageModel.for_inference(model)
     
+    # Generate deterministic rationales (temperature=0)
     m_step_triples = []
-    for i, output in enumerate(outputs):
-        z_det = output.outputs[0].text.strip()
-        m_step_triples.append({
-            "concepts": triples[i]['concepts'],
-            "rationale": z_det,
-            "problem": triples[i]['problem']
-        })
+    for t in triples:
+        prompt = f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:"
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=768,
+            temperature=0.0,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        rationale = generated_text.split("Rationale:")[-1].strip()
+        # Stop at Problem: if it appears
+        if "\nProblem:" in rationale:
+            rationale = rationale.split("\nProblem:")[0].strip()
         
-    del llm
+        m_step_triples.append({
+            "concepts": t['concepts'],
+            "rationale": rationale,
+            "problem": t['problem']
+        })
+    
+    # Cleanup
+    del model
     gc.collect()
     torch.cuda.empty_cache()
     
