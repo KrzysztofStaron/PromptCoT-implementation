@@ -261,7 +261,9 @@ def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128
                 raise ValueError(f"Invalid tensor types: loss_x={type(per_sample_loss_x_cpu)}, loss_z={type(per_sample_loss_z_cpu)}")
             
             # Compute rewards: -(loss_x + loss_z) - already on CPU
-            batch_rewards = -(per_sample_loss_x_cpu + per_sample_loss_z_cpu).tolist()
+            # Negate tensor first, then convert to list (fixes operator precedence issue)
+            combined_loss = per_sample_loss_x_cpu + per_sample_loss_z_cpu
+            batch_rewards = (-combined_loss).tolist()
             del per_sample_loss_x_cpu, per_sample_loss_z_cpu
             
             # Assign rewards to valid items
