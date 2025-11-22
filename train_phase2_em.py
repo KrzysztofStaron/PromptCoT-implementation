@@ -173,7 +173,17 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
     # Generate with vLLM (restart each iteration to pick up new LoRA adapters)
-    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128, gpu_memory_utilization=0.9) 
+    # Optimized for H200 NVL: higher memory utilization and better batching
+    llm = LLM(
+        model=MODEL_NAME,
+        enable_lora=True,
+        max_lora_rank=128,
+        gpu_memory_utilization=0.95,  # Increased from 0.9 for better GPU utilization
+        max_num_batched_tokens=32768,  # Allow larger batches for better throughput
+        max_num_seqs=2048,  # More concurrent sequences
+        enable_chunked_prefill=True,  # Better for large batches
+        block_size=16,  # Memory efficiency optimization
+    ) 
     
     # Download adapter from HF if not available locally
     if not os.path.exists(current_q_subfolder):
@@ -383,7 +393,17 @@ def generate_m_step_data(triples, updated_q_subfolder):
     # Prepare prompts
     vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
-    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128, gpu_memory_utilization=0.9)
+    # Optimized for H200 NVL: higher memory utilization and better batching
+    llm = LLM(
+        model=MODEL_NAME,
+        enable_lora=True,
+        max_lora_rank=128,
+        gpu_memory_utilization=0.95,  # Increased from 0.9 for better GPU utilization
+        max_num_batched_tokens=32768,  # Allow larger batches for better throughput
+        max_num_seqs=2048,  # More concurrent sequences
+        enable_chunked_prefill=True,  # Better for large batches
+        block_size=16,  # Memory efficiency optimization
+    )
     
     # Check if updated adapter exists locally (it should, we just trained it)
     # If not (e.g. remote only), download it
