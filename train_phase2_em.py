@@ -288,44 +288,16 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
 def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     """Run a single training step (SFT) for either p_theta or q_phi.
     
-    Strategy: Load base model, load adapter, merge weights, then apply fresh LoRA.
+    Simplified approach: Just load base model and apply fresh LoRA (no merging).
+    This avoids dtype mismatches and PEFT config conflicts.
     """
+    # Load base model fresh each time
     model, tokenizer = FastLanguageModel.from_pretrained(
         MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
     )
     
-    # Try to load and merge existing adapter
-    adapter_merged = False
-    try:
-        adapter_path = None
-        if os.path.exists(base_adapter_subfolder):
-            adapter_path = base_adapter_subfolder
-        else:
-            # Download adapter from HF if not available locally
-            print(f"Downloading adapter from {HF_REPO_ID} subfolder {base_adapter_subfolder}...")
-            try:
-                downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{base_adapter_subfolder}/*", token=HF_TOKEN)
-                adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
-            except Exception as e:
-                print(f"Adapter download failed: {e}")
-        
-        if adapter_path and os.path.exists(adapter_path):
-            from peft import PeftModel
-            print(f"Loading adapter from {adapter_path}...")
-            # Load as PEFT model so we can merge
-            peft_model = PeftModel.from_pretrained(model, adapter_path)
-            print("Merging adapter weights into base model...")
-            model = peft_model.merge_and_unload()
-            adapter_merged = True
-            print("✓ Adapter merged successfully")
-            del peft_model
-            gc.collect()
-            torch.cuda.empty_cache()
-    except Exception as e:
-        print(f"Adapter load/merge failed: {e}, starting from base model")
-    
-    # Now apply fresh LoRA on top (either on merged model or base model)
-    print("Applying fresh LoRA adapter...")
+    # Apply fresh LoRA directly on base model
+    print("Applying fresh LoRA adapter on base model...")
     model = FastLanguageModel.get_peft_model(
         model,
         r=64,
