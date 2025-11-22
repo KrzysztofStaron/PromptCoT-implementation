@@ -65,6 +65,7 @@ def train_model(mode, output_dir, hf_path, dataset):
         dtype=DTYPE,
         load_in_4bit=LOAD_IN_4BIT,
         token=HF_TOKEN,
+        device_map="cuda",
     )
     
     # Add LoRA config (same as Phase 0)
