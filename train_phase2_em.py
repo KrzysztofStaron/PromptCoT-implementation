@@ -23,6 +23,14 @@ from huggingface_hub import HfApi, create_repo, snapshot_download
 from dotenv import load_dotenv
 import wandb
 from trl import SFTTrainer
+
+# Set vLLM logging level before importing vLLM
+os.environ["VLLM_LOGGING_LEVEL"] = "WARNING"
+os.environ["VLLM_USE_MODELSCOPE"] = "False"
+# Suppress Gloo/NCCL verbose output
+os.environ["GLOO_LOG_LEVEL"] = "WARN"
+os.environ["NCCL_DEBUG"] = "WARN"
+
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 from hf_config import HF_REPO_ID, HF_VERSION
@@ -30,8 +38,19 @@ from hf_config import HF_REPO_ID, HF_VERSION
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging levels for verbose libraries
+import transformers
+import datasets
+import huggingface_hub
+
+transformers.logging.set_verbosity_error()
+datasets.logging.set_verbosity_error()
+huggingface_hub.logging.set_verbosity_warning()
+
+# Set main logger to WARNING to reduce noise
+logging.basicConfig(level=logging.WARNING)
 log = logging.getLogger(__name__)
+log.setLevel(logging.WARNING)
 
 # --- Config ---
 MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B"
