@@ -85,7 +85,8 @@ def train_model(mode, output_dir, hf_path, dataset):
     # Load Phase 0 Adapters from HuggingFace
     print(f"Loading Phase 0 adapters from {BASE_MODEL_PATH}")
     try:
-        model.load_adapter(BASE_MODEL_PATH)
+        model.load_adapter(BASE_MODEL_PATH, adapter_name="phase0_adapter")
+        model.set_adapter("phase0_adapter")
     except Exception as e:
         print(f"Error loading adapter from HF: {e}")
         print("Ensure Phase 0 has finished uploading and the path is correct.")
