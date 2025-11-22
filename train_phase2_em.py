@@ -17,6 +17,7 @@ import threading
 import sys
 import shutil
 import glob
+import argparse
 from transformers import AutoTokenizer, TrainingArguments, DataCollatorForLanguageModeling
 from datasets import Dataset, load_dataset
 from huggingface_hub import HfApi, create_repo, snapshot_download
@@ -60,6 +61,26 @@ LOAD_IN_4BIT = True
 
 EM_ITERS = 6
 NUM_TRIPLETS = 4000
+
+# Command-line arguments
+parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
+parser.add_argument("--test", action="store_true", help="Run only 1 EM iteration for testing")
+parser.add_argument("--testm", action="store_true", help="Run only M-step (skip E-step generation/selection), no HF upload")
+parser.add_argument("--num-triplets", type=int, default=None, help="Number of triples to use (overrides NUM_TRIPLETS)")
+args = parser.parse_args()
+
+# Override EM_ITERS if test mode
+if args.test:
+    EM_ITERS = 1
+    print("TEST MODE: Running only 1 EM iteration")
+
+# Override NUM_TRIPLETS if specified
+if args.num_triplets is not None:
+    NUM_TRIPLETS = args.num_triplets
+    print(f"Using {NUM_TRIPLETS} triples (overridden from command line)")
+
+if args.testm:
+    print("TEST-M MODE: Running only M-step (skipping E-step), no HuggingFace uploads")
 
 # Paths
 # We load models from HuggingFace directly
@@ -514,8 +535,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
     
-    # Upload
-    if HF_TOKEN:
+    # Upload (skip if testm mode)
+    if HF_TOKEN and not args.testm:
         iter_name = output_path.split('/')[-1] # iter-N
         hf_subpath = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/{iter_name}"
         api = HfApi(token=HF_TOKEN)
@@ -524,6 +545,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         # Also upload to latest
         hf_latest_path = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/latest"
         api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_latest_path, repo_type="model")
+    elif args.testm:
+        print(f"  Skipping HuggingFace upload (testm mode): {output_path}")
     
     del model, trainer
     torch.cuda.empty_cache()
@@ -662,25 +685,41 @@ def main():
     
     for iteration in range(start_iter, EM_ITERS + 1):
         print(f"\n=== EM Iteration {iteration} ===")
-        k = get_k_samples(iteration)
-        print(f"Sampling k={k}")
         
-        # 1. E-Step: Generate Rationales using current q_phi
-        candidates = run_e_step_generation(triples, k, current_q_subfolder)
-        
-        # 2. E-Step: Reward & Selection (find best z*)
-        best_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
-        
-        # 3. E-Step Update: Train q_phi on best_triples (SFT)
-        # This produces q_phi^{new}
-        current_q_subfolder = run_e_step_update(best_triples, current_q_subfolder, iteration)
-        
-        # 4. M-Step Prep: Generate deterministic rationales using q_phi^{new}
-        m_step_triples = generate_m_step_data(triples, current_q_subfolder)
+        if args.testm:
+            # TEST-M MODE: Skip E-step, use existing triples directly for M-step
+            print("TEST-M MODE: Skipping E-step (generation & selection)")
+            print("  Using loaded triples directly for M-step training")
+            
+            # Use triples as-is (they already have rationales from the dataset)
+            m_step_triples = triples
+            
+        else:
+            # Normal EM loop
+            k = get_k_samples(iteration)
+            print(f"Sampling k={k}")
+            
+            # 1. E-Step: Generate Rationales using current q_phi
+            candidates = run_e_step_generation(triples, k, current_q_subfolder)
+            
+            # 2. E-Step: Reward & Selection (find best z*)
+            best_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
+            
+            # 3. E-Step Update: Train q_phi on best_triples (SFT)
+            # This produces q_phi^{new}
+            current_q_subfolder = run_e_step_update(best_triples, current_q_subfolder, iteration)
+            
+            # 4. M-Step Prep: Generate deterministic rationales using q_phi^{new}
+            m_step_triples = generate_m_step_data(triples, current_q_subfolder)
         
         # 5. M-Step Update: Train p_theta on m_step_triples
         # This produces p_theta^{new}
         current_p_subfolder = run_m_step_update(m_step_triples, current_p_subfolder, iteration)
+        
+        # In testm mode, also train q_phi on the same triples
+        if args.testm:
+            print("TEST-M MODE: Also training q_phi on triples")
+            current_q_subfolder = run_e_step_update(m_step_triples, current_q_subfolder, iteration)
         
         # Cleanup old iterations
         cleanup_old_iterations(f"./models/{HF_VERSION}/p", keep_count=3)
