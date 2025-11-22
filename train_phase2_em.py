@@ -46,7 +46,7 @@ NUM_TRIPLETS = 1000
 
 # Paths
 # We load models from HuggingFace directly
-HF_JOINT_SUBFOLDER = f"{HF_VERSION}/joint"
+HF_COLD_START_P_SUBFOLDER = f"{HF_VERSION}/joint"
 HF_COLD_START_Q_SUBFOLDER = f"{HF_VERSION}/q/cold-start"
 
 # Local cache/output paths for iterations
@@ -172,7 +172,8 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     
     lora_req = LoRARequest("q_adapter", 1, q_adapter_path)
     
-    params = SamplingParams(n=k, temperature=0.8, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
+    # Paper uses temperature 1.0 for E-step sampling
+    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
     
     outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
@@ -295,7 +296,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         per_device_train_batch_size=4,
         gradient_accumulation_steps=8,
         num_train_epochs=3, # Plan requirement
-        learning_rate=5e-5,
+        learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
         output_dir=output_path,
@@ -445,7 +446,7 @@ def main():
         current_q_subfolder = f"{HF_VERSION}/q/iter-{latest_iter}"
     else:
         print("Starting from scratch (Iteration 1)")
-        current_p_subfolder = HF_JOINT_SUBFOLDER
+        current_p_subfolder = HF_COLD_START_P_SUBFOLDER
         current_q_subfolder = HF_COLD_START_Q_SUBFOLDER
     
     for iteration in range(start_iter, EM_ITERS + 1):
