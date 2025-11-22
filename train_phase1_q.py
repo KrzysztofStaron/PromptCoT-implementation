@@ -103,7 +103,7 @@ def train_model(mode, output_dir, hf_path, dataset):
     # Training Args
     training_args = TrainingArguments(
         per_device_train_batch_size=16, # Grok-4.1 Recipe: batch 16
-        gradient_accumulation_steps=8,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
+        gradient_accumulation_steps=12,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
         warmup_steps=100,
         num_train_epochs=1, # Single epoch over 40k samples (same compute as 4 epochs × 10k)
         learning_rate=2e-4,
