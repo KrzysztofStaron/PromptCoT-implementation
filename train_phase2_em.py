@@ -542,8 +542,10 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
             lora_alpha=32,
             lora_dropout=0,
             bias="none",
+            use_gradient_checkpointing="unsloth",
             random_state=3407,
             use_rslora=False,
+            ensure_weight_tying=True,  # Fix warning about tie_word_embeddings
         )
     
     # 4. Prepare Model for Training
