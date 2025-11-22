@@ -1,9 +1,0 @@
-\section{Conclusions and Future Work}
-In this work, we introduced PromptCoT~2.0, a principled framework for rationale-driven prompt synthesis that addresses the persistent shortage of high-quality training problems for reasoning-focused LLMs.  
-By formulating concept–rationale–prompt generation as an expectation–maximization procedure, our method iteratively refines rationales and leverages them to construct substantially more difficult and diverse problems across mathematics and programming.  
-Beyond synthesis, we demonstrated how these problems can fuel two complementary post-training regimes: \emph{self-play}, which enables strong models to improve autonomously through verifiable feedback without reliance on ever-stronger external teachers, and \emph{supervised fine-tuning}, which allows weaker models to acquire reasoning skills from teacher-distilled traces.  Extensive experiments show that PromptCoT~2.0 not only establishes new state-of-the-art results at the 30B scale but also allows 7B models trained purely on synthetic prompts to achieve performance competitive with models trained on human-curated or hybrid datasets. 
-Our analyses further confirm that the synthesized problems differ fundamentally from prior corpora, exhibiting higher difficulty and richer distributional diversity—qualities essential for advancing LLM reasoning.  
-
-Looking ahead, we view prompt synthesis as a central axis for scaling reasoning beyond brute-force model size or computation.  
-Future work includes extending our EM-based framework to multimodal settings, integrating richer verification signals to broaden self-play, and exploring its role in the development of agentic intelligence.  
-We hope that PromptCoT~2.0 and the accompanying dataset will provide a foundation for the next generation of open-source reasoning models and accelerate progress toward autonomous, verifiably strong LLMs.
