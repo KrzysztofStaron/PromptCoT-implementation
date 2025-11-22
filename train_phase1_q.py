@@ -98,16 +98,17 @@ def train_model(mode, output_dir, hf_path, dataset):
 
     # Training Args
     training_args = TrainingArguments(
-        per_device_train_batch_size=192, 
-        gradient_accumulation_steps=1,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
+        per_device_train_batch_size=4, 
+        gradient_accumulation_steps=16,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
         warmup_steps=100,
         num_train_epochs=1, # Single epoch over 40k samples (same compute as 4 epochs × 10k)
         learning_rate=2e-4,
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
-        logging_steps=10,
-        optim="adamw_8bit",
+        logging_steps=1,
+        optim="paged_adamw_32bit",
         weight_decay=0.01,
+        max_grad_norm=1.0,
         lr_scheduler_type="linear",
         seed=3407,
         output_dir=output_dir,
