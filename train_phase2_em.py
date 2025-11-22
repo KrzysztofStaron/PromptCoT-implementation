@@ -5,12 +5,16 @@
 # - Reward: -loss + structure_penalty (missing fields/tags -> -10.0)
 # - Generation: Force prefix "\nRationale:" for q_phi
 
+import os
+# Enable logits for Unsloth inference (needed for reward computation)
+# MUST be set before importing Unsloth
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
+
 from unsloth import FastLanguageModel
 import json
 import torch
 import gc
 import re
-import os
 import logging
 import tempfile
 import threading
@@ -31,9 +35,6 @@ from hf_config import HF_REPO_ID, HF_VERSION
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Enable logits for Unsloth inference (needed for reward computation)
-os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
-
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BASE_NUM_TRIPLETS = 20  # Base number of triples (used when k=3)
+BASE_NUM_TRIPLETS = 5000  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
@@ -158,7 +159,7 @@ def compute_reward(model, tokenizer, c, x, z):
         log.error(f"Reward comp error: {e}")
         return -100.0  # Same large penalty on error
 
-def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=32):
+def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128):
     """Compute rewards for a batch of (concepts, problems, rationales) in parallel.
     
     Args:
@@ -316,9 +317,9 @@ def run_e_step_generation(triples, k, current_q_subfolder):
         model=MODEL_NAME,
         enable_lora=True,
         max_lora_rank=128,
-        gpu_memory_utilization=0.95,  # High utilization for H200
-        max_num_batched_tokens=32768,  # Allow larger batches
-        max_num_seqs=2048,  # More concurrent sequences
+        gpu_memory_utilization=0.98,  # Maximize H200 utilization (141GB VRAM)
+        max_num_batched_tokens=65536,  # Larger batches for H200
+        max_num_seqs=4096,  # More concurrent sequences for H200
         enable_chunked_prefill=True,  # Better for large batches
         block_size=16,  # Memory efficiency optimization
     )
@@ -422,7 +423,7 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     print(f"  Computing rewards for {total_candidates} candidates in batches...")
     
     # Process in batches
-    BATCH_SIZE_REWARD = 64  # Batch size for reward computation
+    BATCH_SIZE_REWARD = 256  # Batch size for reward computation (optimized for H200)
     total_batches = (total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD
     all_rewards = []
     
@@ -504,8 +505,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     
     print("  Starting training...")
     training_args = TrainingArguments(
-        per_device_train_batch_size=128, # Optimized for H200 NVL (141GB VRAM) - increased for better utilization
-        gradient_accumulation_steps=2,  # Effective batch size = 128 * 2 = 256
+        per_device_train_batch_size=192, # Maximize H200 utilization (141GB VRAM)
+        gradient_accumulation_steps=2,  # Effective batch size = 192 * 2 = 384
         num_train_epochs=1, # Plan requirement
         learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
         fp16=False,  # Disable fp16 - model is in bfloat16
@@ -514,7 +515,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         optim="adamw_8bit",
         report_to="wandb",
         run_name=run_name,
-        dataloader_num_workers=16,  # Increased for faster data loading on H200
+        dataloader_num_workers=32,  # Maximize CPU utilization for data loading on H200
         gradient_checkpointing=False,  # Explicitly disable gradient checkpointing
     )
     
@@ -590,11 +591,23 @@ def generate_m_step_data(triples, updated_q_subfolder):
     
     FastLanguageModel.for_inference(model)
     
-    # Generate deterministic rationales (temperature=0)
+    # Generate deterministic rationales (temperature=0) in batches
+    print(f"  Generating deterministic rationales for {len(triples)} triples...")
+    prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
+    
     m_step_triples = []
-    for t in triples:
-        prompt = f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:"
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    batch_size_gen = 32  # Batch size for M-step generation
+    
+    for batch_start in range(0, len(prompts), batch_size_gen):
+        batch_end = min(batch_start + batch_size_gen, len(prompts))
+        batch_prompts = prompts[batch_start:batch_end]
+        batch_triples = triples[batch_start:batch_end]
+        
+        # Tokenize batch
+        inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        
+        # Generate for batch
         outputs = model.generate(
             **inputs,
             max_new_tokens=768,
@@ -602,17 +615,25 @@ def generate_m_step_data(triples, updated_q_subfolder):
             do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )
-        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        rationale = generated_text.split("Rationale:")[-1].strip()
-        # Stop at Problem: if it appears
-        if "\nProblem:" in rationale:
-            rationale = rationale.split("\nProblem:")[0].strip()
         
-        m_step_triples.append({
-            "concepts": t['concepts'],
-            "rationale": rationale,
-            "problem": t['problem']
-        })
+        # Process outputs
+        for i, output in enumerate(outputs):
+            generated_text = tokenizer.decode(output, skip_special_tokens=True)
+            rationale = generated_text.split("Rationale:")[-1].strip()
+            # Stop at Problem: if it appears
+            if "\nProblem:" in rationale:
+                rationale = rationale.split("\nProblem:")[0].strip()
+            
+            m_step_triples.append({
+                "concepts": batch_triples[i]['concepts'],
+                "rationale": rationale,
+                "problem": batch_triples[i]['problem']
+            })
+        
+        del inputs, outputs
+        torch.cuda.empty_cache()
+    
+    print(f"  Generated {len(m_step_triples)} deterministic rationales")
     
     # Cleanup
     del model
