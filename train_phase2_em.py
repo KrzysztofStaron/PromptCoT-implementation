@@ -42,7 +42,7 @@ LOAD_IN_4BIT = True
 EM_ITERS = 6
 BATCH_SIZE = 64 # Adjusted for H100 & 7B model size (Increased for higher utilization)
 GRAD_ACCUM = 4
-NUM_TRIPLETS = 3000
+NUM_TRIPLETS = 4000
 
 # Paths
 # We load models from HuggingFace directly
@@ -308,8 +308,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     ds = Dataset.from_dict({"text": texts})
     
     args = TrainingArguments(
-        per_device_train_batch_size=32, # Increased from 4 for H100
-        gradient_accumulation_steps=2,  # Effective batch size = 16 * 4 * num_gpus (approx 64)
+        per_device_train_batch_size=64, # Optimized for H200 NVL (143GB VRAM) - increased from 32
+        gradient_accumulation_steps=2,  # Effective batch size = 64 * 2 = 128
         num_train_epochs=1, # Plan requirement
         learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
         fp16=not torch.cuda.is_bf16_supported(),
@@ -317,7 +317,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         output_dir=output_path,
         optim="adamw_8bit",
         report_to="wandb",
-        run_name=run_name
+        run_name=run_name,
+        dataloader_num_workers=8,  # Faster data loading for better GPU utilization
     )
     
     trainer = SFTTrainer(
