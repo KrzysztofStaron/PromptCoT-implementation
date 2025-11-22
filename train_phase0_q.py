@@ -76,6 +76,8 @@ def main():
         output_dir=OUTPUT_DIR,
         report_to="wandb",
         run_name=f"phase0_joint_{HF_VERSION}",
+        logging_steps=5,
+        logging_first_step=True,
     )
     
     trainer = SFTTrainer(
