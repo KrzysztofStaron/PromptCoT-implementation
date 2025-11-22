@@ -80,7 +80,7 @@ def train_model(mode, output_dir, hf_path, dataset):
         random_state=3407,
         use_rslora=False,
         loftq_config=None,
-        modules_to_save=None
+        modules_to_save=["embed_tokens", "lm_head"]
     )
     
     # Load Phase 0 Adapters from HuggingFace
