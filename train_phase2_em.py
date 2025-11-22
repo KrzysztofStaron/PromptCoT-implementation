@@ -40,8 +40,6 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BATCH_SIZE = 64 # Adjusted for H100 & 7B model size (Increased for higher utilization)
-GRAD_ACCUM = 4
 NUM_TRIPLETS = 4000
 
 # Paths
