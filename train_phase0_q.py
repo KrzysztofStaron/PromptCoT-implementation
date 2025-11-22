@@ -73,7 +73,6 @@ def main():
         gradient_accumulation_steps=2,
         warmup_steps=100,
         num_train_epochs=1,
-        learning_rate=2e-4,
         output_dir=OUTPUT_DIR,
         report_to="wandb",
         run_name=f"phase0_joint_{HF_VERSION}",
