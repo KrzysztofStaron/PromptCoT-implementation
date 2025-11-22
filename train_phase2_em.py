@@ -208,12 +208,22 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     try:
          # Check if local or HF
          if os.path.exists(current_p_subfolder):
-             p_model.load_adapter(current_p_subfolder)
+             p_adapter_path = current_p_subfolder
          else:
-             p_model.load_adapter(HF_REPO_ID, subfolder=current_p_subfolder, adapter_name="p_adapter")
-             p_model.set_adapter("p_adapter")
+             # Download adapter from HF if not available locally
+             print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_p_subfolder}...")
+             try:
+                 downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_p_subfolder}/*", token=HF_TOKEN)
+                 p_adapter_path = os.path.join(downloaded_path, current_p_subfolder)
+             except Exception as e:
+                 print(f"Warning: Could not download {current_p_subfolder}: {e}")
+                 raise
+         
+         p_model.load_adapter(p_adapter_path, adapter_name="p_adapter")
+         p_model.set_adapter("p_adapter")
     except Exception as e:
          print(f"Error loading p_theta: {e}")
+         raise
 
     FastLanguageModel.for_inference(p_model)
     
@@ -256,15 +266,20 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     try:
         # Try loading existing adapter
         if os.path.exists(base_adapter_subfolder):
-            model.load_adapter(base_adapter_subfolder)
+            adapter_path = base_adapter_subfolder
+            model.load_adapter(adapter_path)
             loaded_adapter = True
         else:
-            # Try HF load
+            # Download adapter from HF if not available locally
+            print(f"Downloading adapter from {HF_REPO_ID} subfolder {base_adapter_subfolder}...")
             try:
-                 model.load_adapter(HF_REPO_ID, subfolder=base_adapter_subfolder)
-                 loaded_adapter = True
-            except:
-                 pass
+                downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{base_adapter_subfolder}/*", token=HF_TOKEN)
+                adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
+                model.load_adapter(adapter_path)
+                loaded_adapter = True
+            except Exception as e:
+                print(f"Adapter download/load failed: {e}")
+                pass
     except Exception as e:
         print(f"Adapter load failed: {e}")
 
