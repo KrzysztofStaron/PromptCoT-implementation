@@ -65,7 +65,6 @@ def train_model(mode, output_dir, hf_path, dataset):
         dtype=DTYPE,
         load_in_4bit=LOAD_IN_4BIT,
         token=HF_TOKEN,
-        device_map="cuda",
     )
     
     # Add LoRA config (same as Phase 0)
@@ -97,6 +96,10 @@ def train_model(mode, output_dir, hf_path, dataset):
     # Ensure model is in training mode
     FastLanguageModel.for_training(model)
     
+    # Force model to GPU
+    if torch.cuda.is_available():
+        model.to("cuda")
+
     # Training Args
     training_args = TrainingArguments(
         per_device_train_batch_size=8,
