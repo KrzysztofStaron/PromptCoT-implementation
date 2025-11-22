@@ -46,22 +46,36 @@ def main():
     # 3. LoRA request
     lora_request = LoRARequest("q_phi_lora", 1, lora_adapter_path)
 
-    # 4. Load dataset (using concepts dataset for testing)
-    ds = datasets.load_dataset("xl-zhao/PromptCoT-2.0-Concepts", split="train[:20]")
+    # 4. Test prompts (user-provided)
+    test_prompts = [
+        "The capital of France is",
+        "Write a Python function to reverse a string:",
+        "Solve the equation 3x + 5 = 20 for x.",
+        "Explain quantum computing like I'm 10 years old."
+    ]
     
+    # 5. Format prompts for Phase 1 q_phi model (Concepts + Problem -> Rationale)
+    # Since these are general prompts, we'll treat them as problems and add placeholder concepts
     prompts = []
-    for ex in ds:
-        # Format: Concepts + Problem -> Rationale
-        # We need a problem, so we'll use a placeholder or extract from dataset if available
-        concepts = " | ".join(ex['foundational_concepts'])
-        # For demo, using a simple problem prompt
-        # In practice, you'd have actual problems from your dataset
-        problem_text = "Given an array of integers, find the maximum sum of a contiguous subarray."
-        
-        prompt = f"Concepts: {concepts}\nProblem: {problem_text}\nRationale:"
+    for test_prompt in test_prompts:
+        # For testing, we'll use generic concepts or extract from the prompt
+        # In practice, you'd have actual concepts from your dataset
+        prompt = f"Concepts: general knowledge | problem solving\nProblem: {test_prompt}\nRationale:"
         prompts.append(prompt)
+    
+    # Also include dataset examples if available
+    try:
+        ds = datasets.load_dataset("xl-zhao/PromptCoT-2.0-Concepts", split="train[:5]")
+        for ex in ds:
+            concepts = " | ".join(ex['foundational_concepts'])
+            problem_text = "Given an array of integers, find the maximum sum of a contiguous subarray."
+            prompt = f"Concepts: {concepts}\nProblem: {problem_text}\nRationale:"
+            prompts.append(prompt)
+    except Exception as e:
+        print(f"Note: Could not load dataset examples: {e}")
+        print("Using only test prompts.")
 
-    # 5. Sampling parameters
+    # 6. Sampling parameters
     sampling_params = SamplingParams(
         temperature=0.7,
         top_p=0.9,
@@ -71,11 +85,11 @@ def main():
         skip_special_tokens=True,
     )
 
-    # 6. Generate rationales
+    # 7. Generate rationales
     print(f"Generating rationales for {len(prompts)} examples...")
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
-    # 7. Save results
+    # 8. Save results
     results = []
     with open("generated_rationales.jsonl", "w", encoding="utf-8") as f:
         for prompt, out in zip(prompts, outputs):
@@ -100,12 +114,17 @@ def main():
     print(f"\nDone! Generated {len(outputs)} rationales.")
     print(f"Results saved to generated_rationales.jsonl")
     
-    # Print first example
-    if results:
-        print("\n--- Example Output ---")
-        print(f"Concepts: {results[0]['concepts']}")
-        print(f"Problem: {results[0]['problem']}")
-        print(f"Rationale: {results[0]['rationale']}")
+    # Print all test prompt results
+    print("\n" + "="*60)
+    print("TEST PROMPT RESULTS:")
+    print("="*60)
+    for i, result in enumerate(results[:len(test_prompts)], 1):
+        print(f"\n--- Test Prompt {i} ---")
+        print(f"Input: {test_prompts[i-1]}")
+        print(f"Concepts: {result['concepts']}")
+        print(f"Problem: {result['problem']}")
+        print(f"Generated Rationale: {result['rationale']}")
+        print("-"*60)
 
 
 if __name__ == "__main__":
