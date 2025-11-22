@@ -45,7 +45,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BASE_NUM_TRIPLETS = 100  # Base number of triples (used when k=3)
+BASE_NUM_TRIPLETS = 50  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
@@ -581,84 +581,74 @@ def run_e_step_update(new_triples, current_q_subfolder, iteration):
     return next_q_path
 
 def generate_m_step_data(triples, updated_q_subfolder):
-    """Generate deterministic rationales for M-step using updated q_phi (Unsloth)."""
+    """Generate deterministic rationales for M-step using updated q_phi (vLLM for fast inference)."""
     print("M-Step Prep: Generating deterministic rationales...")
     
-    # Load model with Unsloth
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        MODEL_NAME,
-        max_seq_length=MAX_SEQ_LENGTH,
-        dtype=DTYPE,
-        load_in_4bit=LOAD_IN_4BIT,
-        token=HF_TOKEN
-    )
+    # Prepare prompts for vLLM: "Concepts: {c}\nProblem: {x}\nRationale:"
+    vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
-    # Load adapter
+    print(f"  Initializing vLLM engine for {len(vllm_prompts)} prompts...")
+    # Generate with vLLM (much faster than Unsloth for batched inference)
+    llm = LLM(
+        model=MODEL_NAME,
+        enable_lora=True,
+        max_lora_rank=128,
+        gpu_memory_utilization=0.85,  # Same as E-step
+        max_num_batched_tokens=32768,  # Same as E-step
+        max_num_seqs=512,  # Same as E-step
+        enable_chunked_prefill=True,
+        block_size=16,
+    )
+    print("  vLLM engine initialized")
+    
+    # Download adapter from HF if not available locally
     adapter_path = None
     if os.path.exists(updated_q_subfolder):
         adapter_path = updated_q_subfolder
+        print(f"  Adapter found locally: {adapter_path}")
     else:
-        print(f"Downloading adapter from {HF_REPO_ID} subfolder {updated_q_subfolder}...")
+        print(f"  Downloading adapter from {HF_REPO_ID} subfolder {updated_q_subfolder}...")
         try:
             downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{updated_q_subfolder}/*", token=HF_TOKEN)
             adapter_path = os.path.join(downloaded_path, updated_q_subfolder)
+            print(f"  Adapter downloaded successfully")
         except Exception as e:
-            print(f"Warning: Could not download {updated_q_subfolder}: {e}")
+            print(f"  Warning: Could not download {updated_q_subfolder}: {e}")
             adapter_path = updated_q_subfolder
     
-    if adapter_path and os.path.exists(adapter_path):
-        model.load_adapter(adapter_path)
+    lora_req = LoRARequest("q_adapter", 1, adapter_path)
     
-    FastLanguageModel.for_inference(model)
+    # Generate deterministic rationales (temperature=0.0 for deterministic)
+    print(f"  Generating deterministic rationales for {len(vllm_prompts)} prompts...")
+    params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=768, stop=["\nProblem:", "Problem:"])
     
-    # Generate deterministic rationales (temperature=0) in batches
-    print(f"  Generating deterministic rationales for {len(triples)} triples...")
-    prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
+    outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
+    # Process outputs
     m_step_triples = []
-    batch_size_gen = 32  # Batch size for M-step generation
-    
-    for batch_start in range(0, len(prompts), batch_size_gen):
-        batch_end = min(batch_start + batch_size_gen, len(prompts))
-        batch_prompts = prompts[batch_start:batch_end]
-        batch_triples = triples[batch_start:batch_end]
+    for i, output in enumerate(outputs):
+        # Get the generated text (first output since n=1 by default)
+        generated_text = output.outputs[0].text.strip()
+        rationale = generated_text
         
-        # Tokenize batch
-        inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        # Stop at Problem: if it appears (shouldn't happen with stop tokens, but just in case)
+        if "\nProblem:" in rationale:
+            rationale = rationale.split("\nProblem:")[0].strip()
         
-        # Generate for batch
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=768,
-            temperature=0.0,
-            do_sample=False,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-        
-        # Process outputs
-        for i, output in enumerate(outputs):
-            generated_text = tokenizer.decode(output, skip_special_tokens=True)
-            rationale = generated_text.split("Rationale:")[-1].strip()
-            # Stop at Problem: if it appears
-            if "\nProblem:" in rationale:
-                rationale = rationale.split("\nProblem:")[0].strip()
-            
-            m_step_triples.append({
-                "concepts": batch_triples[i]['concepts'],
-                "rationale": rationale,
-                "problem": batch_triples[i]['problem']
-            })
-        
-        del inputs, outputs
-        torch.cuda.empty_cache()
+        m_step_triples.append({
+            "concepts": triples[i]['concepts'],
+            "rationale": rationale,
+            "problem": triples[i]['problem']
+        })
     
     print(f"  Generated {len(m_step_triples)} deterministic rationales")
     
-    # Cleanup
-    del model
+    # Clean up vLLM to free VRAM
+    print("  Cleaning up vLLM engine...")
+    del llm
     gc.collect()
     torch.cuda.empty_cache()
+    print("  Cleanup complete")
     
     return m_step_triples
 
