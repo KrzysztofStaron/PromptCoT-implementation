@@ -24,7 +24,7 @@ BASE_MODEL_PATH = f"./models/{HF_VERSION}/joint" # Load from Phase 0 local save
 # If not local, load from HF: f"{HF_REPO_ID}/{HF_VERSION}/joint" (requires adapter merging or loading adapter on base)
 # Since we run in sequence on cloud, local path is best.
 
-MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-14B" # The base model
+MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B" # The base model
 MAX_SEQ_LENGTH = 8192
 DTYPE = None
 LOAD_IN_4BIT = True

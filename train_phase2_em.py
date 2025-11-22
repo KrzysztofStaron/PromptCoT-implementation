@@ -30,13 +30,13 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 # --- Config ---
-MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-14B"
+MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B"
 MAX_SEQ_LENGTH = 8192
 DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BATCH_SIZE = 8 # Adjusted for H100 & 14B model size
+BATCH_SIZE = 8 # Adjusted for H100 & 7B model size
 GRAD_ACCUM = 4
 
 # Paths

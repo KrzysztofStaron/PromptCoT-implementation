@@ -1,7 +1,7 @@
 # train_phase0_joint.py
 # Phase 0: Joint Supervised Pre-training (1 hr)
 # Goal: Teach the format Concepts -> Rationale -> Problem perfectly.
-# Model: DeepSeek-R1-Distill-Qwen-14B-Base (Unsloth Optimized)
+# Model: DeepSeek-R1-Distill-Qwen-7B-Base (Unsloth Optimized)
 
 import os
 import re
@@ -18,7 +18,7 @@ load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # --- Config ---
-MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-14B" # Or Qwen2.5-Coder-14B-Base if preferred
+MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B" # 7B for faster training
 MAX_SEQ_LENGTH = 8192 # DeepSeek context length
 DTYPE = None # Auto-detect (BF16 on H100)
 LOAD_IN_4BIT = True
@@ -97,8 +97,8 @@ def main():
     )
     
     # 3. Load and Format Dataset
-    print("Loading xl-zhao/PromptCoT-Problem-Generation-Dataset (First 10k)...")
-    dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train[:10000]")
+    print("Loading xl-zhao/PromptCoT-Problem-Generation-Dataset (First 40k)...")
+    dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train[:40000]")
     print(f"Original size: {len(dataset)}")
     
     dataset = dataset.map(parse_promptcot_dataset, batched=True, remove_columns=dataset.column_names)
@@ -110,7 +110,7 @@ def main():
         gradient_accumulation_steps=8,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
         warmup_steps=100,
         # max_steps=0, # Use epochs (defaults to -1 which means use num_train_epochs)
-        num_train_epochs=4, # Phase 0 requirement
+        num_train_epochs=1, # Single epoch over 40k samples (same compute as 4 epochs × 10k)
         learning_rate=2e-4,
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
