@@ -541,7 +541,6 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
             lora_alpha=32,
             lora_dropout=0,
             bias="none",
-            use_gradient_checkpointing=False,  # EXPLICITLY DISABLED - prevents AttributeError
             random_state=3407,
             use_rslora=False,
         )
@@ -558,14 +557,10 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         gradient_accumulation_steps=2,
         num_train_epochs=1,
         learning_rate=2e-6,
-        fp16=not torch.cuda.is_bf16_supported(),
-        bf16=torch.cuda.is_bf16_supported(),
         output_dir=output_path,
-        optim="adamw_8bit",
         report_to="wandb",
         run_name=run_name,
         dataloader_num_workers=8,
-        gradient_checkpointing=False,  # EXPLICITLY DISABLED - prevents AttributeError
     )
     
     # 7. Train
