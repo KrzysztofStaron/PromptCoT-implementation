@@ -317,9 +317,9 @@ def run_e_step_generation(triples, k, current_q_subfolder):
         model=MODEL_NAME,
         enable_lora=True,
         max_lora_rank=128,
-        gpu_memory_utilization=0.98,  # Maximize H200 utilization (141GB VRAM)
-        max_num_batched_tokens=65536,  # Larger batches for H200
-        max_num_seqs=4096,  # More concurrent sequences for H200
+        gpu_memory_utilization=0.92,  # High utilization for H200 without OOM
+        max_num_batched_tokens=49152,  # Large batches for H200 (75% of 65536)
+        max_num_seqs=1024,  # Balanced concurrent sequences for H200
         enable_chunked_prefill=True,  # Better for large batches
         block_size=16,  # Memory efficiency optimization
     )
