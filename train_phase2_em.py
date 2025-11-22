@@ -326,33 +326,79 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     del model, trainer
     torch.cuda.empty_cache()
 
-def run_m_step_training(new_triples, current_p_subfolder, current_q_subfolder, iteration):
-    """Run M-Step: Train p_theta and q_phi."""
-    print("M-Step: Training...")
-    
-    # Prepare Dataset
-    # p_theta data: "Concepts: {c}\nRationale: {z}\nProblem: {x}"
-    p_texts = [f"Concepts: {t['concepts']}\nRationale: {t['rationale']}\nProblem: {t['problem']}" for t in new_triples]
-    # q_phi data: "Concepts: {c}\nProblem: {x}\nRationale: {z}"
+def run_e_step_update(new_triples, current_q_subfolder, iteration):
+    """Train q_phi on the best selected rationales (SFT)."""
+    print("E-Step: Updating q_phi...")
+    # Prepare q_phi data: "Concepts: ... Problem: ... Rationale: {best_z}"
+    # q_phi learns to produce the SELECTED best rationale given (c, x)
     q_texts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale: {t['rationale']}" for t in new_triples]
     
-    # Paths for new iter
-    # Local paths for saving
-    next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
     next_q_path = f"./models/{HF_VERSION}/q/iter-{iteration}"
     
-    # Train both models
-    run_training_step(p_texts, current_p_subfolder, next_p_path, f"p_iter{iteration}")
+    # Train SFT to update q_phi
     run_training_step(q_texts, current_q_subfolder, next_q_path, f"q_iter{iteration}")
-    
-    # Cleanup old iterations (keep only 3 newest)
-    cleanup_old_iterations(f"./models/{HF_VERSION}/p", keep_count=3)
-    cleanup_old_iterations(f"./models/{HF_VERSION}/q", keep_count=3)
-    
-    # Return paths for next iteration
-    return next_p_path, next_q_path
+    return next_q_path
 
-# --- Main EM Loop ---
+def generate_m_step_data(triples, updated_q_subfolder):
+    """Generate deterministic rationales for M-step using updated q_phi."""
+    print("M-Step Prep: Generating deterministic rationales...")
+    
+    # Use the same generation logic but with temp=0
+    # We need to load the just-updated q_phi
+    
+    # Prepare prompts
+    vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
+    
+    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128)
+    
+    # Check if updated adapter exists locally (it should, we just trained it)
+    # If not (e.g. remote only), download it
+    if not os.path.exists(updated_q_subfolder):
+         print(f"Downloading adapter from {HF_REPO_ID} subfolder {updated_q_subfolder}...")
+         try:
+             q_adapter_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{updated_q_subfolder}/*")
+             q_adapter_path = os.path.join(q_adapter_path, updated_q_subfolder)
+         except Exception as e:
+             # Fallback to string path if it's actually a HF path
+             q_adapter_path = updated_q_subfolder
+    else:
+         q_adapter_path = updated_q_subfolder
+         
+    lora_req = LoRARequest("q_adapter_new", 1, q_adapter_path)
+    
+    # Deterministic generation
+    params = SamplingParams(n=1, temperature=0.0, max_tokens=768, stop=["\nProblem:", "Problem:"])
+    
+    outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
+    
+    m_step_triples = []
+    for i, output in enumerate(outputs):
+        z_det = output.outputs[0].text.strip()
+        m_step_triples.append({
+            "concepts": triples[i]['concepts'],
+            "rationale": z_det,
+            "problem": triples[i]['problem']
+        })
+        
+    del llm
+    gc.collect()
+    torch.cuda.empty_cache()
+    
+    return m_step_triples
+
+def run_m_step_update(m_step_triples, current_p_subfolder, iteration):
+    """Train p_theta on deterministic rationales."""
+    print("M-Step: Updating p_theta...")
+    
+    # Prepare p_theta data: "Concepts: ... Rationale: {z_det} Problem: ..."
+    # p_theta learns to generate the problem given (c, z_det)
+    p_texts = [f"Concepts: {t['concepts']}\nRationale: {t['rationale']}\nProblem: {t['problem']}" for t in m_step_triples]
+    
+    next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
+    
+    run_training_step(p_texts, current_p_subfolder, next_p_path, f"p_iter{iteration}")
+    return next_p_path
+
 def find_latest_iteration():
     """Find the latest iteration number from HuggingFace repository."""
     if not HF_TOKEN:
@@ -382,6 +428,7 @@ def find_latest_iteration():
         log.warning(f"Failed to check HuggingFace for latest iteration: {e}")
         return 0
 
+# --- Main EM Loop ---
 def main():
     # Load Triples
     triples = load_initial_triples()
@@ -406,16 +453,26 @@ def main():
         k = get_k_samples(iteration)
         print(f"Sampling k={k}")
         
-        # --- E-Step: Generate Rationales using q_phi ---
+        # 1. E-Step: Generate Rationales using current q_phi
         candidates = run_e_step_generation(triples, k, current_q_subfolder)
         
-        # --- E-Step: Reward & Selection ---
-        new_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
+        # 2. E-Step: Reward & Selection (find best z*)
+        best_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
         
-        # --- M-Step: Train p_theta and q_phi ---
-        current_p_subfolder, current_q_subfolder = run_m_step_training(
-            new_triples, current_p_subfolder, current_q_subfolder, iteration
-        )
+        # 3. E-Step Update: Train q_phi on best_triples (SFT)
+        # This produces q_phi^{new}
+        current_q_subfolder = run_e_step_update(best_triples, current_q_subfolder, iteration)
+        
+        # 4. M-Step Prep: Generate deterministic rationales using q_phi^{new}
+        m_step_triples = generate_m_step_data(triples, current_q_subfolder)
+        
+        # 5. M-Step Update: Train p_theta on m_step_triples
+        # This produces p_theta^{new}
+        current_p_subfolder = run_m_step_update(m_step_triples, current_p_subfolder, iteration)
+        
+        # Cleanup old iterations
+        cleanup_old_iterations(f"./models/{HF_VERSION}/p", keep_count=3)
+        cleanup_old_iterations(f"./models/{HF_VERSION}/q", keep_count=3)
         
     print("EM Loop Complete!")
 
