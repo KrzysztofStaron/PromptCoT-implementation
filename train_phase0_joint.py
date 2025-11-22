@@ -6,7 +6,7 @@
 import os
 import re
 import sys
-#from unsloth import FastLanguageModel
+from unsloth import FastLanguageModel
 from transformers import TrainingArguments
 from trl import SFTTrainer
 from datasets import load_dataset
