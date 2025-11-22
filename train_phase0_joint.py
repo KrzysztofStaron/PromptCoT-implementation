@@ -82,18 +82,20 @@ def main():
         token=HF_TOKEN,
     )
     
-    # 2. Add LoRA Adapters
+    # 2. Add LoRA Adapters (QLoRA with 4-bit base + FULL training of embeddings/head)
     model = FastLanguageModel.get_peft_model(
         model,
-        r=64, # Grok-4.1 Recipe: r=128
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=32,
+        r=128, # Higher rank = more capacity (closer to full fine-tuning)
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
+                        "gate_proj", "up_proj", "down_proj"],  # LoRA on transformer layers
+        lora_alpha=64,  # Doubled to match higher rank
         lora_dropout=0,
         bias="none",
         use_gradient_checkpointing="unsloth",
         random_state=3407,
         use_rslora=False,
         loftq_config=None,
+        modules_to_save=["embed_tokens", "lm_head"],  # FULLY train embeddings & output (not quantized!)
     )
     
     # 3. Load and Format Dataset
