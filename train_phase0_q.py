@@ -1,6 +1,6 @@
-# train_phase0_joint.py
-# Phase 0: Joint Supervised Pre-training (1 hr)
-# Goal: Teach the format Concepts -> Rationale -> Problem perfectly.
+# train_phase0_q.py
+# Phase 0: Q Model Pre-training (q_phi)
+# Goal: Teach the q_phi model the format Concepts -> Problem -> Rationale.
 # Model: DeepSeek-R1-Distill-Qwen-7B-Base (Unsloth Optimized)
 
 import os
@@ -24,7 +24,6 @@ MAX_SEQ_LENGTH = 8192 # DeepSeek context length
 DTYPE = None # Auto-detect (BF16 on H100)
 LOAD_IN_4BIT = True
 
-OUTPUT_DIR = f"./models/{HF_VERSION}/joint"
 HF_OUTPUT_PATH = f"{HF_VERSION}/q/cold-start"
 
 # TEST MODE FLAG
@@ -33,8 +32,8 @@ TEST_DATASET_ONLY = "--test-dataset" in sys.argv
 # --- Dataset Parsing ---
 def parse_promptcot_dataset(examples):
     # Format:
-    # Prompt (Concepts) -> Completion (Rationale + Problem)
-    # We want: "Concepts: {concepts}\nRationale: {rationale}\nProblem: {problem}"
+    # Concepts -> Problem -> Rationale
+    # We want: "Concepts: {concepts}\nProblem: {problem}\nRationale: {rationale}"
     
     prompts = examples['prompt']
     completions = examples['completion']
@@ -68,8 +67,8 @@ def parse_promptcot_dataset(examples):
             problem = problem_match.group(1).strip()
             
             # Construct Training Format
-            # "Concepts: ...\nRationale: ...\nProblem: ..."
-            text = f"Concepts: {concepts_cleaned}\nRationale: {rationale}\nProblem: {problem}"
+            # "Concepts: ...\nProblem: ...\nRationale: ..."
+            text = f"Concepts: {concepts_cleaned}\nProblem: {problem}\nRationale: {rationale}"
             texts.append(text)
             
     return {"text": texts}
