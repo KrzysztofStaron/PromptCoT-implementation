@@ -60,7 +60,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BASE_NUM_TRIPLETS = 5000  # Base number of triples (used when k=3)
+BASE_NUM_TRIPLETS = 50  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
