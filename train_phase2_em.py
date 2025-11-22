@@ -694,16 +694,118 @@ def generate_m_step_data(triples, updated_q_subfolder):
     return m_step_triples
 
 def run_m_step_update(m_step_triples, current_p_subfolder, iteration):
-    """Train p_theta on deterministic rationales."""
+    """Train p_theta on deterministic rationales - simple, no batching."""
     print("M-Step: Updating p_theta...")
     
-    # Prepare p_theta data: "Concepts: ... Rationale: {z_det} Problem: ..."
-    # p_theta learns to generate the problem given (c, z_det)
+    # 1. Load base model
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
+    )
+    
+    # 2. Load adapter
+    adapter_loaded = False
+    if os.path.exists(current_p_subfolder):
+        try:
+            model.load_adapter(current_p_subfolder)
+            adapter_loaded = True
+        except Exception as e:
+            print(f"Failed to load local adapter: {e}")
+    
+    if not adapter_loaded:
+        try:
+            downloaded_path = snapshot_download(
+                repo_id=HF_REPO_ID,
+                allow_patterns=f"{current_p_subfolder}/*",
+                token=HF_TOKEN
+            )
+            adapter_path = os.path.join(downloaded_path, current_p_subfolder)
+            model.load_adapter(adapter_path)
+            adapter_loaded = True
+        except Exception as e:
+            print(f"Could not download adapter: {e}")
+            print("Initializing new adapter from scratch")
+            model = FastLanguageModel.get_peft_model(
+                model,
+                r=64,
+                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
+                                "gate_proj", "up_proj", "down_proj"],
+                lora_alpha=32,
+                lora_dropout=0,
+                bias="none",
+                use_gradient_checkpointing="unsloth",
+                random_state=3407,
+                use_rslora=False,
+                ensure_weight_tying=True,
+            )
+    
+    # 3. Prepare for training
+    FastLanguageModel.for_training(model)
+    
+    # 4. Prepare data - simple format
     p_texts = [f"Concepts: {t['concepts']}\nRationale: {t['rationale']}\nProblem: {t['problem']}" for t in m_step_triples]
+    ds = Dataset.from_dict({"text": p_texts})
     
+    # 5. Simple training args - no batching tricks, no fancy stuff
+    args = TrainingArguments(
+        per_device_train_batch_size=1,  # Process one at a time
+        num_train_epochs=1,
+        learning_rate=2e-6,
+        output_dir=f"./models/{HF_VERSION}/p/iter-{iteration}",
+        report_to="wandb",
+        run_name=f"p_iter{iteration}",
+        dataloader_num_workers=0,  # No multiprocessing
+    )
+    
+    # 6. Simple trainer - no packing
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=ds,
+        dataset_text_field="text",
+        max_seq_length=MAX_SEQ_LENGTH,
+        packing=False,  # No packing
+        args=args
+    )
+    
+    # 7. Train
+    trainer.train()
+    
+    # 8. Save
     next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
+    model.save_pretrained(next_p_path)
+    tokenizer.save_pretrained(next_p_path)
+    print(f"✓ Saved model to {next_p_path}")
     
-    run_training_step(p_texts, current_p_subfolder, next_p_path, f"p_iter{iteration}")
+    # 9. Upload (skip if testm mode or --no-upload flag)
+    import train_phase2_em as this_module
+    cli_args = getattr(this_module, 'args', type('obj', (object,), {'testm': False, 'no_upload': False})())
+    testm_mode = cli_args.testm
+    no_upload = cli_args.no_upload
+    if HF_TOKEN and not testm_mode and not no_upload:
+        try:
+            api = HfApi(token=HF_TOKEN)
+            hf_subpath = f"{HF_VERSION}/p/iter-{iteration}"
+            api.upload_folder(
+                folder_path=next_p_path,
+                repo_id=HF_REPO_ID,
+                path_in_repo=hf_subpath,
+                repo_type="model"
+            )
+            hf_latest_path = f"{HF_VERSION}/p/latest"
+            api.upload_folder(
+                folder_path=next_p_path,
+                repo_id=HF_REPO_ID,
+                path_in_repo=hf_latest_path,
+                repo_type="model"
+            )
+            print(f"✓ Uploaded to HuggingFace: {hf_subpath} and {hf_latest_path}")
+        except Exception as e:
+            print(f"Upload failed: {e}")
+    
+    # 10. Cleanup
+    del model, trainer
+    torch.cuda.empty_cache()
+    
     return next_p_path
 
 def find_latest_iteration():
