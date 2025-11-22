@@ -45,7 +45,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BASE_NUM_TRIPLETS = 5000  # Base number of triples (used when k=3)
+BASE_NUM_TRIPLETS = 100  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
@@ -223,7 +223,10 @@ def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128
                 mask_x = (shift_labels_x != pad_token_id).float()
                 per_sample_loss_x = (losses_x * mask_x).sum(dim=1) / mask_x.sum(dim=1).clamp(min=1)
             
-            del inputs_x, outputs_x, logits_x, labels_x
+            # Move to CPU and delete immediately to free GPU memory
+            per_sample_loss_x_cpu = per_sample_loss_x.cpu()
+            del inputs_x, outputs_x, logits_x, labels_x, shift_logits_x, shift_labels_x, flat_shift_logits_x, flat_shift_labels_x, losses_x, mask_x, per_sample_loss_x
+            torch.cuda.empty_cache()
             
             # Prepare batched inputs for loss_z: "Concepts: {c}\nRationale: {z}"
             texts_z = [f"Concepts: {c}\nRationale: {z}" for c, x, z in batch_valid]
@@ -247,10 +250,14 @@ def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128
                 mask_z = (shift_labels_z != pad_token_id).float()
                 per_sample_loss_z = (losses_z * mask_z).sum(dim=1) / mask_z.sum(dim=1).clamp(min=1)
             
-            del inputs_z, outputs_z, logits_z, labels_z
+            # Move to CPU and delete immediately
+            per_sample_loss_z_cpu = per_sample_loss_z.cpu()
+            del inputs_z, outputs_z, logits_z, labels_z, shift_logits_z, shift_labels_z, flat_shift_logits_z, flat_shift_labels_z, losses_z, mask_z, per_sample_loss_z
+            torch.cuda.empty_cache()
             
-            # Compute rewards: -(loss_x + loss_z)
-            batch_rewards = -(per_sample_loss_x.cpu() + per_sample_loss_z.cpu()).tolist()
+            # Compute rewards: -(loss_x + loss_z) - already on CPU
+            batch_rewards = -(per_sample_loss_x_cpu + per_sample_loss_z_cpu).tolist()
+            del per_sample_loss_x_cpu, per_sample_loss_z_cpu
             
             # Assign rewards to valid items
             for idx, reward in zip(valid_indices[batch_start:batch_end], batch_rewards):
@@ -317,9 +324,9 @@ def run_e_step_generation(triples, k, current_q_subfolder):
         model=MODEL_NAME,
         enable_lora=True,
         max_lora_rank=128,
-        gpu_memory_utilization=0.92,  # High utilization for H200 without OOM
-        max_num_batched_tokens=49152,  # Large batches for H200 (75% of 65536)
-        max_num_seqs=1024,  # Balanced concurrent sequences for H200
+        gpu_memory_utilization=0.85,  # Reduced from 0.92 to leave more buffer (prevents OOM)
+        max_num_batched_tokens=32768,  # Reduced from 49152 to prevent OOM
+        max_num_seqs=512,  # Reduced from 1024 to prevent OOM
         enable_chunked_prefill=True,  # Better for large batches
         block_size=16,  # Memory efficiency optimization
     )
@@ -423,7 +430,7 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     print(f"  Computing rewards for {total_candidates} candidates in batches...")
     
     # Process in batches
-    BATCH_SIZE_REWARD = 256  # Batch size for reward computation (optimized for H200)
+    BATCH_SIZE_REWARD = 128  # Reduced from 256 to prevent OOM with seq_len=8192
     total_batches = (total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD
     all_rewards = []
     
@@ -491,7 +498,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         lora_alpha=32,
         lora_dropout=0,
         bias="none",
-        use_gradient_checkpointing=False,  # Disable gradient checkpointing
+        use_gradient_checkpointing="unsloth",  # Enable gradient checkpointing to save memory
         random_state=3407,
         use_rslora=False,
     )
@@ -505,8 +512,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     
     print("  Starting training...")
     training_args = TrainingArguments(
-        per_device_train_batch_size=192, # Maximize H200 utilization (141GB VRAM)
-        gradient_accumulation_steps=2,  # Effective batch size = 192 * 2 = 384
+        per_device_train_batch_size=90, # Reduced from 192 to prevent OOM with seq_len=8192
+        gradient_accumulation_steps=2,  # Effective batch size = 64 * 6 = 384 (same effective batch)
         num_train_epochs=1, # Plan requirement
         learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
         fp16=False,  # Disable fp16 - model is in bfloat16
@@ -516,7 +523,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         report_to="wandb",
         run_name=run_name,
         dataloader_num_workers=32,  # Maximize CPU utilization for data loading on H200
-        gradient_checkpointing=False,  # Explicitly disable gradient checkpointing
+        gradient_checkpointing=True,  # Enable to save memory (trades compute for memory)
     )
     
     trainer = SFTTrainer(
