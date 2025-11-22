@@ -205,7 +205,7 @@ def main():
         from vllm.lora.request import LoRARequest
         lora_req = LoRARequest("q_adapter", 1, current_q_path)
         
-        params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
+        params = SamplingParams(n=k, temperature=0.8, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
         
         outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
         

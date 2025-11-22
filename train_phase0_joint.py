@@ -109,7 +109,7 @@ def main():
         per_device_train_batch_size=16, # Grok-4.1 Recipe: batch 16
         gradient_accumulation_steps=8,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
         warmup_steps=100,
-        max_steps=0, # Use epochs
+        # max_steps=0, # Use epochs (defaults to -1 which means use num_train_epochs)
         num_train_epochs=4, # Phase 0 requirement
         learning_rate=2e-4,
         fp16=not torch.cuda.is_bf16_supported(),
