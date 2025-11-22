@@ -14,13 +14,17 @@ import logging
 import tempfile
 import threading
 import sys
+import shutil
+import glob
 from transformers import AutoTokenizer, TrainingArguments, DataCollatorForLanguageModeling
 from unsloth import FastLanguageModel
 from datasets import Dataset, load_dataset
-from huggingface_hub import HfApi, create_repo
+from huggingface_hub import HfApi, create_repo, snapshot_download
 from dotenv import load_dotenv
 import wandb
 from trl import SFTTrainer
+from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
 from hf_config import HF_REPO_ID, HF_VERSION
 
 load_dotenv()
@@ -38,6 +42,7 @@ LOAD_IN_4BIT = True
 EM_ITERS = 6
 BATCH_SIZE = 8 # Adjusted for H100 & 7B model size
 GRAD_ACCUM = 4
+NUM_TRIPLETS = 1000
 
 # Paths
 # We load models from HuggingFace directly
@@ -51,6 +56,34 @@ OUTPUT_DIR_BASE = f"./models/{HF_VERSION}"
 HF_P_BASE = f"{HF_VERSION}/p/"
 HF_Q_BASE = f"{HF_VERSION}/q/"
 
+# --- Cleanup Old Iterations ---
+def cleanup_old_iterations(base_dir, keep_count=3):
+    """Keep only the keep_count newest iteration directories, delete older ones."""
+    if not os.path.exists(base_dir):
+        return
+    
+    # Find all iter-* directories
+    iter_dirs = glob.glob(os.path.join(base_dir, "iter-*"))
+    
+    if len(iter_dirs) <= keep_count:
+        return
+    
+    # Extract iteration numbers and sort
+    def get_iter_num(path):
+        basename = os.path.basename(path)
+        try:
+            return int(basename.split("-")[1])
+        except (IndexError, ValueError):
+            return -1
+    
+    iter_dirs.sort(key=get_iter_num, reverse=True)
+    
+    # Delete oldest ones (keep only keep_count newest)
+    for old_dir in iter_dirs[keep_count:]:
+        if os.path.exists(old_dir):
+            print(f"Deleting old iteration: {old_dir}")
+            shutil.rmtree(old_dir)
+
 # --- Sampling Schedule ---
 def get_k_samples(iteration):
     if iteration <= 2: return 3
@@ -59,60 +92,19 @@ def get_k_samples(iteration):
 
 # --- Structure Check & Reward ---
 def check_structure_and_tags(text):
-    """
-    Check for Concepts, Rationale, Problem fields AND proper formatting.
-    Since q_phi generates Rationale given Concepts+Problem, or p_theta generates all?
-    
-    Wait, in EM:
-    E-step: q_phi(z | c, x) -> generates rationales z.
-    Structure of z: Just the rationale text.
-    But we reward based on p_theta(x | z, c) + p_theta(z | c).
-    
-    The text passed to reward computation is constructed:
-    "Concepts: {c}\nRationale: {z}\nProblem: {x}"
-    
-    Structure penalty applies if the GENERATED z breaks format? 
-    z is usually just the text. 
-    
-    Let's assume strictness is about the content of z not being garbage/empty.
-    
-    However, the prompt says: "If generated text missing any of the three fields -> reward -= 10.0".
-    This likely refers to the full construction or if we were generating full completions.
-    Since z comes from q_phi which outputs "Rationale: ...", we check if z is valid.
-    
-    Let's ensure z is non-empty and reasonable.
-    """
+    """Check if rationale text is non-empty and reasonable."""
     if not text or len(text.strip()) < 10:
         return False
     return True
 
 def compute_reward(model, tokenizer, c, x, z):
-    # R = log p(x|z,c) + log p(z|c) + penalty
-    
-    # Penalty check
+    """Compute reward as negative log-likelihood of the full sequence."""
     if not check_structure_and_tags(z):
         return -10.0
         
     try:
-        # 1. log p(x | z, c)
-        # Prompt: "Concepts: {c}\nRationale: {z}\nProblem:" -> Target: "{x}"
-        # Or full sequence probability? usually conditional log likelihood of target given context.
-        
-        # "Concepts: {c}\nRationale: {z}\nProblem: {x}"
         full_text = f"Concepts: {c}\nRationale: {z}\nProblem: {x}"
         inputs = tokenizer(full_text, return_tensors="pt").to("cuda")
-        
-        # We want loss on the full sequence? Or just x?
-        # Standard approximation: Use the model's loss on the full sequence.
-        # Loss = - log P(sequence). 
-        # We want log P(x|z,c) + log P(z|c) = log P(x,z|c).
-        # P(x,z|c) is exactly the probability of the sequence "Rationale: z\nProblem: x" given "Concepts: c".
-        
-        # So we just calculate loss of "Rationale: {z}\nProblem: {x}" given prefix "Concepts: {c}".
-        # Or simply loss of the whole sequence "Concepts: ... \nRationale: ... \nProblem: ..."
-        # The standard causal LM loss is average NLL per token.
-        # Total NLL = loss * num_tokens.
-        # Reward = - Total NLL.
         
         with torch.no_grad():
             outputs = model(**inputs, labels=inputs["input_ids"])
@@ -126,16 +118,7 @@ def compute_reward(model, tokenizer, c, x, z):
 
 # --- Data Loader ---
 def load_initial_triples():
-    ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train")
-    # Sample first 3000 for the EM loop as per plan (or full 88k if fast enough? Plan said "Target: 88k+ Samples")
-    # But EM loop is expensive. 88k * k samples might take forever.
-    # Grok recipe mentioned: "Data Strategy (Target: 3000 Triplets)" in manual annotation section, 
-    # but plan v2 said "Source: xl-zhao... (88k samples)".
-    # Let's stick to a subset if we want to finish in 14-16 hours. 88k * 6 iters * 10 samples is heavy.
-    # Maybe we train on a subset of 5k-10k per iteration? Or full dataset?
-    # With Unsloth and vLLM, generation is fast.
-    # Let's try to use a robust subset, say 10,000 high quality ones.
-    # Or just iterate through the dataset.
+    ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split=f"train[:{NUM_TRIPLETS}]")
     
     # Parsing
     triples = []
@@ -161,17 +144,216 @@ def load_initial_triples():
             })
             
     print(f"Loaded {len(triples)} triples.")
-    return triples[:5000] # Limit to 5000 for feasibility within 14h on single H100
+    return triples[:NUM_TRIPLETS] # Limit to NUM_TRIPLETS for feasibility within 14h on single H100
+
+# --- Helper Functions ---
+
+def run_e_step_generation(triples, k, current_q_subfolder):
+    """Run E-Step: Generate Rationales using q_phi (vLLM)."""
+    print("E-Step: Generating Rationales...")
+    
+    # Prepare prompts for vLLM: "Concepts: {c}\nProblem: {x}\nRationale:"
+    vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
+    
+    # Generate with vLLM (restart each iteration to pick up new LoRA adapters)
+    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128) 
+    
+    # Download adapter from HF if not available locally
+    if not os.path.exists(current_q_subfolder):
+         print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
+         try:
+             q_adapter_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*")
+             q_adapter_path = os.path.join(q_adapter_path, current_q_subfolder)
+         except Exception as e:
+             print(f"Warning: Could not download {current_q_subfolder}: {e}")
+             q_adapter_path = current_q_subfolder
+    else:
+         q_adapter_path = current_q_subfolder
+    
+    lora_req = LoRARequest("q_adapter", 1, q_adapter_path)
+    
+    params = SamplingParams(n=k, temperature=0.8, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
+    
+    outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
+    
+    # Collect candidates: triples[i] -> [z1, z2, ..., zk]
+    candidates = []
+    for output in outputs:
+        z_list = [o.text.strip() for o in output.outputs] 
+        candidates.append(z_list)
+        
+    # Clean up vLLM to free VRAM for M-step training
+    del llm
+    gc.collect()
+    torch.cuda.empty_cache()
+    
+    return candidates
+
+def run_e_step_selection(triples, candidates, current_p_subfolder):
+    """Run E-Step: Select Best Rationales using p_theta."""
+    print("E-Step: Selecting Best Rationales...")
+    # Load p_theta for scoring
+    # Use Unsloth for efficient inference scoring
+    p_model, tokenizer = FastLanguageModel.from_pretrained(
+        MODEL_NAME,
+        max_seq_length=MAX_SEQ_LENGTH,
+        dtype=DTYPE,
+        load_in_4bit=LOAD_IN_4BIT,
+        token=HF_TOKEN
+    )
+    
+    # Load adapter
+    print(f"Loading p_theta adapter from {HF_REPO_ID} subfolder {current_p_subfolder}")
+    try:
+         # Check if local or HF
+         if os.path.exists(current_p_subfolder):
+             p_model.load_adapter(current_p_subfolder)
+         else:
+             p_model.load_adapter(HF_REPO_ID, subfolder=current_p_subfolder, adapter_name="p_adapter")
+             p_model.set_adapter("p_adapter")
+    except Exception as e:
+         print(f"Error loading p_theta: {e}")
+
+    FastLanguageModel.for_inference(p_model)
+    
+    new_triples = []
+    
+    for i, t in enumerate(triples):
+        c = t['concepts']
+        x = t['problem']
+        z_list = candidates[i] # list of k strings
+        
+        scores = []
+        for z in z_list:
+            score = compute_reward(p_model, tokenizer, c, x, z)
+            scores.append(score)
+        
+        # Select best
+        best_idx = scores.index(max(scores))
+        best_z = z_list[best_idx]
+        
+        new_triples.append({
+            "concepts": c,
+            "rationale": best_z,
+            "problem": x
+        })
+        
+    # Cleanup p_model
+    del p_model
+    gc.collect()
+    torch.cuda.empty_cache()
+    
+    return new_triples
+
+def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
+    """Run a single training step (SFT) for either p_theta or q_phi."""
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
+    )
+    
+    loaded_adapter = False
+    try:
+        # Try loading existing adapter
+        if os.path.exists(base_adapter_subfolder):
+            model.load_adapter(base_adapter_subfolder)
+            loaded_adapter = True
+        else:
+            # Try HF load
+            try:
+                 model.load_adapter(HF_REPO_ID, subfolder=base_adapter_subfolder)
+                 loaded_adapter = True
+            except:
+                 pass
+    except Exception as e:
+        print(f"Adapter load failed: {e}")
+
+    if loaded_adapter:
+        print(f"Resumed adapter from {base_adapter_subfolder}")
+        FastLanguageModel.for_training(model)
+    else:
+        print("Initializing NEW LoRA adapter")
+        # Add LoRA config
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=64,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
+                            "gate_proj", "up_proj", "down_proj",
+                            ],
+            lora_alpha=32,
+            lora_dropout=0,
+            bias="none",
+            use_gradient_checkpointing="unsloth",
+            random_state=3407,
+            use_rslora=False,
+        )
+    
+    FastLanguageModel.for_training(model)
+    
+    ds = Dataset.from_dict({"text": texts})
+    
+    args = TrainingArguments(
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=8,
+        num_train_epochs=3, # Plan requirement
+        learning_rate=5e-5,
+        fp16=not torch.cuda.is_bf16_supported(),
+        bf16=torch.cuda.is_bf16_supported(),
+        output_dir=output_path,
+        optim="adamw_8bit",
+        report_to="wandb",
+        run_name=run_name
+    )
+    
+    trainer = SFTTrainer(
+        model=model, tokenizer=tokenizer, train_dataset=ds, dataset_text_field="text",
+        max_seq_length=MAX_SEQ_LENGTH, packing=True, args=args
+    )
+    trainer.train()
+    model.save_pretrained(output_path)
+    tokenizer.save_pretrained(output_path)
+    
+    # Upload
+    if HF_TOKEN:
+        iter_name = output_path.split('/')[-1] # iter-N
+        hf_subpath = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/{iter_name}"
+        api = HfApi(token=HF_TOKEN)
+        api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_subpath, repo_type="model")
+        
+        # Also upload to latest
+        hf_latest_path = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/latest"
+        api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_latest_path, repo_type="model")
+    
+    del model, trainer
+    torch.cuda.empty_cache()
+
+def run_m_step_training(new_triples, current_p_subfolder, current_q_subfolder, iteration):
+    """Run M-Step: Train p_theta and q_phi."""
+    print("M-Step: Training...")
+    
+    # Prepare Dataset
+    # p_theta data: "Concepts: {c}\nRationale: {z}\nProblem: {x}"
+    p_texts = [f"Concepts: {t['concepts']}\nRationale: {t['rationale']}\nProblem: {t['problem']}" for t in new_triples]
+    # q_phi data: "Concepts: {c}\nProblem: {x}\nRationale: {z}"
+    q_texts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale: {t['rationale']}" for t in new_triples]
+    
+    # Paths for new iter
+    # Local paths for saving
+    next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
+    next_q_path = f"./models/{HF_VERSION}/q/iter-{iteration}"
+    
+    # Train both models
+    run_training_step(p_texts, current_p_subfolder, next_p_path, f"p_iter{iteration}")
+    run_training_step(q_texts, current_q_subfolder, next_q_path, f"q_iter{iteration}")
+    
+    # Cleanup old iterations (keep only 3 newest)
+    cleanup_old_iterations(f"./models/{HF_VERSION}/p", keep_count=3)
+    cleanup_old_iterations(f"./models/{HF_VERSION}/q", keep_count=3)
+    
+    # Return paths for next iteration
+    return next_p_path, next_q_path
 
 # --- Main EM Loop ---
 def main():
-    # Initialize vLLM for E-step (Rationale Generation)
-    from vllm import LLM, SamplingParams
-    print("Initializing vLLM...")
-    # We need to load the current q_phi model into vLLM.
-    # In Iter 1, it's HF_COLD_START_Q (Rationale Model).
-    # vLLM supports LoRA. We load base model + LoRA.
-    
     # Setup paths - initial iteration uses HF paths
     current_q_subfolder = HF_COLD_START_Q_SUBFOLDER
     current_p_subfolder = HF_JOINT_SUBFOLDER # p_theta starts as the joint model from Phase 0
@@ -185,224 +367,17 @@ def main():
         print(f"Sampling k={k}")
         
         # --- E-Step: Generate Rationales using q_phi ---
-        print("E-Step: Generating Rationales...")
-        
-        # Prepare prompts for vLLM: "Concepts: {c}\nProblem: {x}\nRationale:"
-        # Note: Forced prefix is just the prompt ending with "\nRationale:"
-        vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
-        
-        # Load vLLM (reload per iter to pick up new LoRA? vLLM loading takes time. 
-        # Better to keep vLLM running and update LoRA adapter?
-        # vLLM LoRA support allows swapping adapters.
-        # But we are updating the model weights. Unsloth saves adapters.
-        # So we can reload the adapter in vLLM.
-        
-        # Simplified: Re-init vLLM or just use HF model for generation if vLLM is too complex to hot-swap in script.
-        # Unsloth generation is also fast. Let's use Unsloth for generation to avoid VRAM fragmentation with 2 engines.
-        # Wait, plan said "vLLM for fast generation". 
-        # Okay, we'll restart vLLM each iter or use LoRA swapping.
-        # Restarting is safer for memory.
-        
-        # Generate
-        llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128) 
-        # We need to pass the adapter path.
-        # For the first iteration, if loading from HF, we might need to download or rely on vLLM handling HF repo IDs.
-        # vLLM's LoRARequest takes a path. If it's an HF Hub path, vLLM might expect a local path or automatic download.
-        # If we are using HF repo ID + subfolder, we need to download it first.
-        
-        from huggingface_hub import snapshot_download
-        import os
-        
-        # Check if current_q is a local path or HF subfolder
-        if not os.path.exists(current_q_subfolder):
-             print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
-             try:
-                 # Download specific subfolder
-                 q_adapter_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*")
-                 # The download returns the root cache dir, we need to append subfolder?
-                 # Actually snapshot_download returns the path to the folder.
-                 # But with allow_patterns, it preserves structure.
-                 q_adapter_path = os.path.join(q_adapter_path, current_q_subfolder)
-             except Exception as e:
-                 print(f"Warning: Could not download {current_q_subfolder}: {e}")
-                 q_adapter_path = current_q_subfolder # Fallback
-        else:
-             q_adapter_path = current_q_subfolder
-        
-        from vllm.lora.request import LoRARequest
-        lora_req = LoRARequest("q_adapter", 1, q_adapter_path)
-        
-        params = SamplingParams(n=k, temperature=0.8, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
-        
-        outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
-        
-        # Collect candidates
-        # Structure: triples[i] -> [z1, z2, ..., zk]
-        candidates = []
-        for output in outputs:
-            # vLLM might return multiple outputs if n>1, but here we might loop or use n=k
-            # If using n=k in SamplingParams
-            # params.n = k
-            # But we need to implement k samples.
-            # Let's assume we run generate once with n=k (if vLLM supports it easily with LoRA)
-            # Actually, let's just sample k times or n=k.
-            z_list = [o.text.strip() for o in output.outputs] 
-            # If n=1, we need to run k times? No, set n=k in params.
-            candidates.append(z_list)
-            
-        # Clean up vLLM to free VRAM for M-step training
-        del llm
-        gc.collect()
-        torch.cuda.empty_cache()
+        candidates = run_e_step_generation(triples, k, current_q_subfolder)
         
         # --- E-Step: Reward & Selection ---
-        print("E-Step: Selecting Best Rationales...")
-        # Load p_theta for scoring
-        # Use Unsloth for efficient inference scoring
-        p_model, tokenizer = FastLanguageModel.from_pretrained(
-            MODEL_NAME,
-            max_seq_length=MAX_SEQ_LENGTH,
-            dtype=DTYPE,
-            load_in_4bit=LOAD_IN_4BIT,
-            token=HF_TOKEN
-        )
-        
-        # Load adapter
-        print(f"Loading p_theta adapter from {HF_REPO_ID} subfolder {current_p_subfolder}")
-        try:
-             # Check if local or HF
-             if os.path.exists(current_p_subfolder):
-                 p_model.load_adapter(current_p_subfolder)
-             else:
-                 p_model.load_adapter(HF_REPO_ID, subfolder=current_p_subfolder, adapter_name="p_adapter")
-                 p_model.set_adapter("p_adapter")
-        except Exception as e:
-             print(f"Error loading p_theta: {e}")
-
-        FastLanguageModel.for_inference(p_model)
-        
-        new_triples = []
-        
-        for i, t in enumerate(triples):
-            c = t['concepts']
-            x = t['problem']
-            z_list = candidates[i] # list of k strings
-            
-            scores = []
-            for z in z_list:
-                score = compute_reward(p_model, tokenizer, c, x, z)
-                scores.append(score)
-            
-            # Select best
-            best_idx = scores.index(max(scores))
-            best_z = z_list[best_idx]
-            
-            new_triples.append({
-                "concepts": c,
-                "rationale": best_z,
-                "problem": x
-            })
-            
-        # Cleanup p_model
-        del p_model
-        gc.collect()
-        torch.cuda.empty_cache()
+        new_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
         
         # --- M-Step: Train p_theta and q_phi ---
-        print("M-Step: Training...")
-        
-        # Prepare Dataset
-        # p_theta data: "Concepts: {c}\nRationale: {z}\nProblem: {x}"
-        p_texts = [f"Concepts: {t['concepts']}\nRationale: {t['rationale']}\nProblem: {t['problem']}" for t in new_triples]
-        # q_phi data: "Concepts: {c}\nProblem: {x}\nRationale: {z}"
-        q_texts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale: {t['rationale']}" for t in new_triples]
-        
-        # Train Function
-        def train_step(texts, base_adapter_subfolder, output_path, run_name):
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
-            )
-            # Add LoRA config
-            model = FastLanguageModel.get_peft_model(
-                model,
-                r=64,
-                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
-                                "gate_proj", "up_proj", "down_proj",
-                                "embed_tokens", "lm_head"],
-                lora_alpha=32,
-                lora_dropout=0,
-                bias="none",
-                use_gradient_checkpointing="unsloth",
-                random_state=3407,
-                use_rslora=False,
-            )
-            
-            # Load previous adapter
-            print(f"Loading previous adapter from {base_adapter_subfolder}")
-            if os.path.exists(base_adapter_subfolder):
-                 model.load_adapter(base_adapter_subfolder)
-            else:
-                 model.load_adapter(HF_REPO_ID, subfolder=base_adapter_subfolder) # Unsloth/PEFT usually handles overwrite?
-            
-            FastLanguageModel.for_training(model)
-            
-            ds = Dataset.from_dict({"text": texts})
-            
-            args = TrainingArguments(
-                per_device_train_batch_size=4,
-                gradient_accumulation_steps=8,
-                num_train_epochs=3, # Plan requirement
-                learning_rate=5e-5,
-                fp16=not torch.cuda.is_bf16_supported(),
-                bf16=torch.cuda.is_bf16_supported(),
-                output_dir=output_path,
-                optim="adamw_8bit",
-                report_to="wandb",
-                run_name=run_name
-            )
-            
-            trainer = SFTTrainer(
-                model=model, tokenizer=tokenizer, train_dataset=ds, dataset_text_field="text",
-                max_seq_length=MAX_SEQ_LENGTH, packing=True, args=args
-            )
-            trainer.train()
-            model.save_pretrained(output_path)
-            tokenizer.save_pretrained(output_path)
-            
-            # Upload
-            if HF_TOKEN:
-                iter_name = output_path.split('/')[-1] # iter-N
-                hf_subpath = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/{iter_name}"
-                api = HfApi(token=HF_TOKEN)
-                api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_subpath, repo_type="model")
-            
-            del model, trainer
-            torch.cuda.empty_cache()
-            
-        # Paths for new iter
-        # Local paths for saving
-        next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
-        next_q_path = f"./models/{HF_VERSION}/q/iter-{iteration}"
-        
-        # HF subfolders for next iter (where they WILL be uploaded)
-        next_p_subfolder = f"{HF_VERSION}/p/iter-{iteration}"
-        next_q_subfolder = f"{HF_VERSION}/q/iter-{iteration}"
-        
-        train_step(p_texts, current_p_subfolder, next_p_path, f"p_iter{iteration}")
-        train_step(q_texts, current_q_subfolder, next_q_path, f"q_iter{iteration}")
-        
-        # Update paths for next loop
-        # For the next iteration, we can use the local path since it was just saved locally?
-        # Or stick to the plan of using HF paths if running distributed?
-        # Assuming single machine for Phase 2 loop -> use local path for speed?
-        # But vLLM needs proper structure.
-        
-        # Let's use the local path for next iteration to avoid waiting for upload/download in the loop.
-        current_p_subfolder = next_p_path
-        current_q_subfolder = next_q_path
+        current_p_subfolder, current_q_subfolder = run_m_step_training(
+            new_triples, current_p_subfolder, current_q_subfolder, iteration
+        )
         
     print("EM Loop Complete!")
 
 if __name__ == "__main__":
     main()
-
