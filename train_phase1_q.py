@@ -26,7 +26,7 @@ HF_PHASE0_SUBFOLDER = f"{HF_VERSION}/joint"
 MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B" # The base model
 MAX_SEQ_LENGTH = 8192
 DTYPE = None
-LOAD_IN_4BIT = False # H200 has plenty of VRAM, disable 4-bit to avoid embedding offloading issues
+LOAD_IN_4BIT = True # 4-bit quantization saves VRAM, matching Phase 0
 
 OUTPUT_DIR_Q = f"./models/{HF_VERSION}/q/cold-start"
 HF_PATH_Q = f"{HF_VERSION}/q/cold-start"
