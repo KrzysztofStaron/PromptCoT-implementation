@@ -353,15 +353,55 @@ def run_m_step_training(new_triples, current_p_subfolder, current_q_subfolder, i
     return next_p_path, next_q_path
 
 # --- Main EM Loop ---
-def main():
-    # Setup paths - initial iteration uses HF paths
-    current_q_subfolder = HF_COLD_START_Q_SUBFOLDER
-    current_p_subfolder = HF_JOINT_SUBFOLDER # p_theta starts as the joint model from Phase 0
+def find_latest_iteration():
+    """Find the latest iteration number from HuggingFace repository."""
+    if not HF_TOKEN:
+        log.warning("HF_TOKEN missing — cannot check HuggingFace for latest iteration")
+        return 0
     
+    try:
+        api = HfApi(token=HF_TOKEN)
+        files = api.list_repo_files(repo_id=HF_REPO_ID, repo_type="model", token=HF_TOKEN)
+        
+        iterations = []
+        for file_path in files:
+            if f"{HF_VERSION}/p/iter-" in file_path:
+                try:
+                    parts = file_path.split(f"{HF_VERSION}/p/iter-")
+                    if len(parts) > 1:
+                        iter_str = parts[1].split("/")[0]
+                        iter_num = int(iter_str)
+                        iterations.append(iter_num)
+                except (ValueError, IndexError):
+                    continue
+        
+        if iterations:
+            return max(iterations)
+        return 0
+    except Exception as e:
+        log.warning(f"Failed to check HuggingFace for latest iteration: {e}")
+        return 0
+
+def main():
     # Load Triples
     triples = load_initial_triples()
+
+    # Check for latest iteration to resume
+    latest_iter = find_latest_iteration()
+    start_iter = latest_iter + 1
     
-    for iteration in range(1, EM_ITERS + 1):
+    if latest_iter > 0:
+        print(f"Resuming from iteration {start_iter}")
+        # If we finished iter N, we want to start iter N+1
+        # The starting models for iter N+1 are the outputs of iter N
+        current_p_subfolder = f"{HF_VERSION}/p/iter-{latest_iter}"
+        current_q_subfolder = f"{HF_VERSION}/q/iter-{latest_iter}"
+    else:
+        print("Starting from scratch (Iteration 1)")
+        current_p_subfolder = HF_JOINT_SUBFOLDER
+        current_q_subfolder = HF_COLD_START_Q_SUBFOLDER
+    
+    for iteration in range(start_iter, EM_ITERS + 1):
         print(f"\n=== EM Iteration {iteration} ===")
         k = get_k_samples(iteration)
         print(f"Sampling k={k}")
