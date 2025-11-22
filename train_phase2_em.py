@@ -532,12 +532,13 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     
     return new_triples
 
-def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
+def run_training_step(texts, base_adapter_subfolder, output_path):
     """Run a single training step (SFT) for either p_theta or q_phi.
-    
+
     Loads the previous adapter (or cold-start) and continues training from it.
+    Does not create separate wandb runs - EM process manages logging.
     """
-    print(f"  Training step: {run_name}")
+    print(f"  Training step: {output_path.split('/')[-1]}")
     print(f"  Training on {len(texts)} examples")
     
     # Load base model fresh each time
@@ -600,8 +601,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         bf16=True,  # Use bf16 to match model dtype
         output_dir=output_path,
         optim="adamw_8bit",
-        report_to="wandb",
-        run_name=run_name,
+        report_to="none",  # Disable wandb reporting - EM run manages logging
         dataloader_num_workers=32,  # Maximize CPU utilization for data loading on H200
         gradient_checkpointing=True,  # Enable to save memory (trades compute for memory)
     )
@@ -640,11 +640,11 @@ def run_e_step_update(new_triples, current_q_subfolder, iteration):
     # Prepare q_phi data: "Concepts: ... Problem: ... Rationale: {best_z}"
     # q_phi learns to produce the SELECTED best rationale given (c, x)
     q_texts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale: {t['rationale']}" for t in new_triples]
-    
+
     next_q_path = f"./models/{HF_VERSION}/q/iter-{iteration}"
-    
+
     # Train SFT to update q_phi
-    run_training_step(q_texts, current_q_subfolder, next_q_path, f"q_iter{iteration}")
+    run_training_step(q_texts, current_q_subfolder, next_q_path)
     return next_q_path
 
 def generate_m_step_data(triples, updated_q_subfolder):
@@ -730,14 +730,15 @@ def generate_m_step_data(triples, updated_q_subfolder):
 def run_m_step_update(m_step_triples, current_p_subfolder, iteration):
     """Train p_theta on deterministic rationales."""
     print("M-Step: Updating p_theta...")
-    
+
     # Prepare p_theta data: "Concepts: ... Rationale: {z_det} Problem: ..."
     # p_theta learns to generate the problem given (c, z_det)
     p_texts = [f"Concepts: {t['concepts']}\nRationale: {t['rationale']}\nProblem: {t['problem']}" for t in m_step_triples]
-    
+
     next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
-    
-    run_training_step(p_texts, current_p_subfolder, next_p_path, f"p_iter{iteration}")
+
+    # Train SFT to update p_theta
+    run_training_step(p_texts, current_p_subfolder, next_p_path)
     return next_p_path
 
 def find_latest_iteration():
@@ -775,6 +776,21 @@ def main():
     # For initial load (used in testm mode), use base number
     initial_triples = load_initial_triples(BASE_NUM_TRIPLETS)
 
+    # Initialize single wandb run for entire EM process
+    print("Initializing EM wandb run...")
+    em_run_id = f"em_training_{EM_ITERS}iters"
+    wandb.init(
+        project="promptcot-em",
+        id=em_run_id,
+        resume="allow",
+        config={
+            "model": MODEL_NAME,
+            "em_iterations": EM_ITERS,
+            "max_seq_length": MAX_SEQ_LENGTH,
+            "base_num_triplets": BASE_NUM_TRIPLETS,
+        }
+    )
+
     # Check for latest iteration to resume
     latest_iter = find_latest_iteration()
     start_iter = latest_iter + 1
@@ -803,7 +819,14 @@ def main():
         k = get_k_samples(iteration)
         num_triples = get_num_triples_for_iteration(iteration)
         print(f"Sampling k={k}, using {num_triples} triples (scaled from base {BASE_NUM_TRIPLETS})")
-        
+
+        # Log iteration start to wandb
+        wandb.log({
+            "iteration": iteration,
+            "k_samples": k,
+            "num_triples": num_triples,
+        })
+
         # Load triples for this iteration (with adjusted count)
         triples = load_initial_triples(num_triples)
         
@@ -823,7 +846,12 @@ def main():
         # 5. M-Step Update: Train p_theta on m_step_triples
         # This produces p_theta^{new}
         current_p_subfolder = run_m_step_update(m_step_triples, current_p_subfolder, iteration)
-        
+
+        # Log iteration completion to wandb
+        wandb.log({
+            "iteration_completed": iteration,
+        })
+
         # Cleanup old iterations
         cleanup_old_iterations(f"./models/{HF_VERSION}/p", keep_count=3)
         cleanup_old_iterations(f"./models/{HF_VERSION}/q", keep_count=3)
