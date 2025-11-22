@@ -39,7 +39,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-NUM_TRIPLETS = 1
+BASE_NUM_TRIPLETS = 5000  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
@@ -93,6 +93,18 @@ def get_k_samples(iteration):
     if iteration <= 4: return 6
     return 10
 
+def get_num_triples_for_iteration(iteration):
+    """Calculate number of triples for an iteration based on k.
+    
+    Decreases NUM_TRIPLETS as k increases to keep total computation roughly constant.
+    Formula: num_triples = BASE_NUM_TRIPLETS * (3 / k)
+    This keeps total candidates roughly constant: triples × k ≈ constant
+    """
+    k = get_k_samples(iteration)
+    # Scale inversely with k: k=3 → full, k=6 → half, k=10 → 30% of base
+    num_triples = int(BASE_NUM_TRIPLETS * (3 / k))
+    return num_triples
+
 # --- Structure Check & Reward ---
 def check_structure_and_tags(text):
     """Check if rationale text is non-empty and reasonable."""
@@ -142,8 +154,16 @@ def compute_reward(model, tokenizer, c, x, z):
         return -100.0  # Same large penalty on error
 
 # --- Data Loader ---
-def load_initial_triples():
-    ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split=f"train[:{NUM_TRIPLETS}]")
+def load_initial_triples(num_triples=None):
+    """Load triples from dataset.
+    
+    Args:
+        num_triples: Number of triples to load. If None, uses BASE_NUM_TRIPLETS.
+    """
+    if num_triples is None:
+        num_triples = BASE_NUM_TRIPLETS
+    
+    ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split=f"train[:{num_triples}]")
     
     # Parsing
     triples = []
@@ -169,7 +189,7 @@ def load_initial_triples():
             })
             
     print(f"Loaded {len(triples)} triples.")
-    return triples[:NUM_TRIPLETS] # Limit to NUM_TRIPLETS for feasibility within 14h on single H100
+    return triples[:num_triples] # Limit to num_triples
 
 # --- Helper Functions ---
 
@@ -488,8 +508,9 @@ def find_latest_iteration():
 
 # --- Main EM Loop ---
 def main():
-    # Load Triples
-    triples = load_initial_triples()
+    # Load triples will be done per iteration with adjusted count based on k
+    # For initial load (used in testm mode), use base number
+    initial_triples = load_initial_triples(BASE_NUM_TRIPLETS)
 
     # Check for latest iteration to resume
     latest_iter = find_latest_iteration()
@@ -508,8 +529,14 @@ def main():
     
     for iteration in range(start_iter, EM_ITERS + 1):
         print(f"\n=== EM Iteration {iteration} ===")
+        
+        # Calculate k and adjust number of triples for this iteration
         k = get_k_samples(iteration)
-        print(f"Sampling k={k}")
+        num_triples = get_num_triples_for_iteration(iteration)
+        print(f"Sampling k={k}, using {num_triples} triples (scaled from base {BASE_NUM_TRIPLETS})")
+        
+        # Load triples for this iteration (with adjusted count)
+        triples = load_initial_triples(num_triples)
         
         # 1. E-Step: Generate Rationales using current q_phi
         candidates = run_e_step_generation(triples, k, current_q_subfolder)
