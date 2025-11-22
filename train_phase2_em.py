@@ -66,6 +66,7 @@ BASE_NUM_TRIPLETS = 5000  # Base number of triples (used when k=3)
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
 parser.add_argument("--test", action="store_true", help="Run only 1 EM iteration for testing")
 parser.add_argument("--testm", action="store_true", help="Run only M-step (skip E-step generation/selection), no HF upload")
+parser.add_argument("--no-upload", action="store_true", help="Disable uploading to HuggingFace (works with any mode)")
 parser.add_argument("--num-triplets", type=int, default=None, help="Number of triples to use (overrides NUM_TRIPLETS)")
 args = parser.parse_args()
 
@@ -581,11 +582,13 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     tokenizer.save_pretrained(output_path)
     print(f"✓ Saved model to {output_path}")
     
-    # 9. Upload (skip if testm mode)
+    # 9. Upload (skip if testm mode or --no-upload flag)
     # Note: 'args' here is TrainingArguments, access module-level argparse 'args' via import
     import train_phase2_em as this_module
-    testm_mode = getattr(this_module, 'args', type('obj', (object,), {'testm': False})()).testm
-    if HF_TOKEN and not testm_mode:
+    cli_args = getattr(this_module, 'args', type('obj', (object,), {'testm': False, 'no_upload': False})())
+    testm_mode = cli_args.testm
+    no_upload = cli_args.no_upload
+    if HF_TOKEN and not testm_mode and not no_upload:
         try:
             iter_name = output_path.split('/')[-1]
             hf_subpath = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/{iter_name}"
@@ -608,8 +611,11 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
             print(f"✓ Uploaded to HuggingFace: {hf_subpath} and {hf_latest_path}")
         except Exception as e:
             print(f"Upload failed: {e}")
-    elif testm_mode:
-        print(f"  Skipping HuggingFace upload (testm mode): {output_path}")
+    else:
+        if testm_mode:
+            print(f"  Skipping HuggingFace upload (testm mode): {output_path}")
+        elif no_upload:
+            print(f"  Skipping HuggingFace upload (--no-upload flag): {output_path}")
     
     # 10. Cleanup
     del model, trainer
