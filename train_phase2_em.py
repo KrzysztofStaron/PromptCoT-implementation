@@ -327,6 +327,41 @@ def load_initial_triples(num_triples=None):
 
 # --- Helper Functions ---
 
+def get_gpu_memory_info():
+    """Get current GPU memory usage information."""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+        reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+        return {
+            'allocated_gb': allocated,
+            'reserved_gb': reserved,
+            'total_gb': total,
+            'free_gb': total - reserved
+        }
+    return None
+
+def log_gpu_memory(stage=""):
+    """Log current GPU memory usage."""
+    mem_info = get_gpu_memory_info()
+    if mem_info:
+        print(f"  GPU Memory {stage}: {mem_info['allocated_gb']:.2f} GB allocated, "
+              f"{mem_info['reserved_gb']:.2f} GB reserved, "
+              f"{mem_info['free_gb']:.2f} GB free (of {mem_info['total_gb']:.2f} GB total)")
+
+def cleanup_gpu_memory():
+    """Aggressively clean up GPU memory."""
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.empty_cache()
+        gc.collect()
+        # Small delay to allow system to release memory
+        import time
+        time.sleep(0.5)
+
 def run_e_step_generation(triples, k, current_q_subfolder):
     """Run E-Step: Generate Rationales using q_phi (vLLM for fast inference)."""
     print("E-Step: Generating Rationales...")
@@ -334,19 +369,21 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     # Prepare prompts for vLLM: "Concepts: {c}\nProblem: {x}\nRationale:"
     vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
+    log_gpu_memory("before vLLM initialization")
     print(f"  Initializing vLLM engine for {len(vllm_prompts)} prompts...")
     # Generate with vLLM (restart each iteration to pick up new LoRA adapters)
     llm = LLM(
         model=MODEL_NAME,
         enable_lora=True,
         max_lora_rank=128,
-        gpu_memory_utilization=0.85,  # Reduced from 0.92 to leave more buffer (prevents OOM)
-        max_num_batched_tokens=32768,  # Reduced from 49152 to prevent OOM
-        max_num_seqs=512,  # Reduced from 1024 to prevent OOM
+        gpu_memory_utilization=0.70,  # Reduced from 0.85 to account for LoRA adapter memory
+        max_num_batched_tokens=16384,  # Reduced from 32768 to prevent OOM
+        max_num_seqs=256,  # Reduced from 512 to prevent OOM
         enable_chunked_prefill=True,  # Better for large batches
         block_size=16,  # Memory efficiency optimization
     )
     print("  vLLM engine initialized")
+    log_gpu_memory("after vLLM initialization")
     
     # Download adapter from HF if not available locally
     adapter_path = None
@@ -363,7 +400,13 @@ def run_e_step_generation(triples, k, current_q_subfolder):
             print(f"  Warning: Could not download {current_q_subfolder}: {e}")
             adapter_path = current_q_subfolder
     
+    # Cleanup before creating LoRA request and starting generation
+    cleanup_gpu_memory()
+    log_gpu_memory("before LoRA adapter loading")
+    
     lora_req = LoRARequest("q_adapter", 1, adapter_path)
+    
+    log_gpu_memory("after LoRA adapter loaded, before generation")
     
     # Paper uses temperature 1.0 for E-step sampling
     print(f"  Generating {k} samples per prompt for {len(vllm_prompts)} prompts...")
@@ -382,8 +425,8 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     # Clean up vLLM to free VRAM for M-step training
     print("  Cleaning up vLLM engine...")
     del llm
-    gc.collect()
-    torch.cuda.empty_cache()
+    cleanup_gpu_memory()
+    log_gpu_memory("after cleanup")
     print("  Cleanup complete")
     
     return candidates
@@ -611,19 +654,21 @@ def generate_m_step_data(triples, updated_q_subfolder):
     # Prepare prompts for vLLM: "Concepts: {c}\nProblem: {x}\nRationale:"
     vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
+    log_gpu_memory("before vLLM initialization (M-step)")
     print(f"  Initializing vLLM engine for {len(vllm_prompts)} prompts...")
     # Generate with vLLM (much faster than Unsloth for batched inference)
     llm = LLM(
         model=MODEL_NAME,
         enable_lora=True,
         max_lora_rank=128,
-        gpu_memory_utilization=0.85,  # Same as E-step
-        max_num_batched_tokens=32768,  # Same as E-step
-        max_num_seqs=512,  # Same as E-step
+        gpu_memory_utilization=0.70,  # Reduced from 0.85 to account for LoRA adapter memory
+        max_num_batched_tokens=32768,  # Reduced from 32768 to prevent OOM
+        max_num_seqs=256,  # Reduced from 512 to prevent OOM
         enable_chunked_prefill=True,
         block_size=16,
     )
     print("  vLLM engine initialized")
+    log_gpu_memory("after vLLM initialization (M-step)")
     
     # Download adapter from HF if not available locally
     adapter_path = None
@@ -640,7 +685,13 @@ def generate_m_step_data(triples, updated_q_subfolder):
             print(f"  Warning: Could not download {updated_q_subfolder}: {e}")
             adapter_path = updated_q_subfolder
     
+    # Cleanup before creating LoRA request and starting generation
+    cleanup_gpu_memory()
+    log_gpu_memory("before LoRA adapter loading (M-step)")
+    
     lora_req = LoRARequest("q_adapter", 1, adapter_path)
+    
+    log_gpu_memory("after LoRA adapter loaded, before generation (M-step)")
     
     # Generate deterministic rationales (temperature=0.0 for deterministic)
     print(f"  Generating deterministic rationales for {len(vllm_prompts)} prompts...")
@@ -670,8 +721,8 @@ def generate_m_step_data(triples, updated_q_subfolder):
     # Clean up vLLM to free VRAM
     print("  Cleaning up vLLM engine...")
     del llm
-    gc.collect()
-    torch.cuda.empty_cache()
+    cleanup_gpu_memory()
+    log_gpu_memory("after cleanup (M-step)")
     print("  Cleanup complete")
     
     return m_step_triples
@@ -741,6 +792,12 @@ def main():
     
     for iteration in range(start_iter, EM_ITERS + 1):
         print(f"\n=== EM Iteration {iteration} ===")
+        
+        # Cleanup GPU memory at start of iteration to ensure clean state
+        if iteration > start_iter:
+            print("  Cleaning up GPU memory at start of iteration...")
+            cleanup_gpu_memory()
+            log_gpu_memory("at iteration start")
         
         # Calculate k and adjust number of triples for this iteration
         k = get_k_samples(iteration)
