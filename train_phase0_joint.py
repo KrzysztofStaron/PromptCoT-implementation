@@ -149,8 +149,8 @@ def main():
     
     # 4. Training Arguments
     training_args = TrainingArguments(
-        per_device_train_batch_size=16, # Grok-4.1 Recipe: batch 16
-        gradient_accumulation_steps=12,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
+        per_device_train_batch_size=192, 
+        gradient_accumulation_steps=1, 
         warmup_steps=100,
         # max_steps=0, # Use epochs (defaults to -1 which means use num_train_epochs)
         num_train_epochs=1, # Single epoch over 40k samples (same compute as 4 epochs × 10k)
