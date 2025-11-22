@@ -7,7 +7,8 @@ import json
 from hf_config import HF_REPO_ID, HF_VERSION
 
 # Ścieżka do modelu Phase 0
-MODEL_PATH = f"{HF_REPO_ID}/{HF_VERSION}/joint"
+REPO_ID = HF_REPO_ID
+SUBFOLDER = f"{HF_VERSION}/joint"
 BASE_MODEL = "unsloth/DeepSeek-R1-Distill-Qwen-7B"
 
 def main():
@@ -21,8 +22,8 @@ def main():
     )
     
     # Wczytaj adapter Phase 0
-    print(f"Wczytywanie adaptera z {MODEL_PATH}...")
-    model.load_adapter(MODEL_PATH, adapter_name="phase0")
+    print(f"Wczytywanie adaptera z {REPO_ID} (subfolder: {SUBFOLDER})...")
+    model.load_adapter(REPO_ID, subfolder=SUBFOLDER, adapter_name="phase0")
     model.set_adapter("phase0")
     
     # Ustaw do generowania
