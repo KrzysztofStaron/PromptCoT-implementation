@@ -24,6 +24,8 @@ from huggingface_hub import HfApi, create_repo, snapshot_download
 from dotenv import load_dotenv
 import wandb
 from trl import SFTTrainer
+from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
 from hf_config import HF_REPO_ID, HF_VERSION
 
 load_dotenv()
@@ -299,85 +301,60 @@ def load_initial_triples(num_triples=None):
 # --- Helper Functions ---
 
 def run_e_step_generation(triples, k, current_q_subfolder):
-    """Run E-Step: Generate Rationales using q_phi (Unsloth)."""
+    """Run E-Step: Generate Rationales using q_phi (vLLM for fast inference)."""
     print("E-Step: Generating Rationales...")
     
-    # Load model with Unsloth
-    print("  [1/5] Loading base model...")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        MODEL_NAME,
-        max_seq_length=MAX_SEQ_LENGTH,
-        dtype=DTYPE,
-        load_in_4bit=LOAD_IN_4BIT,
-        token=HF_TOKEN
-    )
-    print("  [1/5] Base model loaded")
+    # Prepare prompts for vLLM: "Concepts: {c}\nProblem: {x}\nRationale:"
+    vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
-    # Load adapter
+    print(f"  Initializing vLLM engine for {len(vllm_prompts)} prompts...")
+    # Generate with vLLM (restart each iteration to pick up new LoRA adapters)
+    llm = LLM(
+        model=MODEL_NAME,
+        enable_lora=True,
+        max_lora_rank=128,
+        gpu_memory_utilization=0.95,  # High utilization for H200
+        max_num_batched_tokens=32768,  # Allow larger batches
+        max_num_seqs=2048,  # More concurrent sequences
+        enable_chunked_prefill=True,  # Better for large batches
+        block_size=16,  # Memory efficiency optimization
+    )
+    print("  vLLM engine initialized")
+    
+    # Download adapter from HF if not available locally
     adapter_path = None
     if os.path.exists(current_q_subfolder):
         adapter_path = current_q_subfolder
-        print(f"  [2/5] Adapter found locally: {adapter_path}")
+        print(f"  Adapter found locally: {adapter_path}")
     else:
-        print(f"  [2/5] Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
+        print(f"  Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
         try:
             downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*", token=HF_TOKEN)
             adapter_path = os.path.join(downloaded_path, current_q_subfolder)
-            print(f"  [2/5] Adapter downloaded successfully")
+            print(f"  Adapter downloaded successfully")
         except Exception as e:
-            print(f"  [2/5] Warning: Could not download {current_q_subfolder}: {e}")
+            print(f"  Warning: Could not download {current_q_subfolder}: {e}")
             adapter_path = current_q_subfolder
     
-    if adapter_path and os.path.exists(adapter_path):
-        print(f"  [3/5] Loading adapter from {adapter_path}...")
-        model.load_adapter(adapter_path)
-        print("  [3/5] Adapter loaded successfully")
-    else:
-        print("  [3/5] No adapter found, using base model")
+    lora_req = LoRARequest("q_adapter", 1, adapter_path)
     
-    print("  [4/5] Preparing model for inference...")
-    FastLanguageModel.for_inference(model)
-    print("  [4/5] Model ready for inference")
+    # Paper uses temperature 1.0 for E-step sampling
+    print(f"  Generating {k} samples per prompt for {len(vllm_prompts)} prompts...")
+    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
     
-    # Batch generation: prepare all prompts and generate k samples for each in parallel
-    print(f"  [5/5] Preparing {len(triples)} prompts, generating {k} samples per prompt...")
-    prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
+    outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
-    # Generate k samples for all triples in batches
+    # Collect candidates: triples[i] -> [z1, z2, ..., zk]
     candidates = []
-    total_prompts = len(prompts)
-    for idx, prompt in enumerate(prompts):
-        if (idx + 1) % 5 == 0 or idx == 0 or idx == total_prompts - 1:
-            print(f"    Generating for prompt {idx + 1}/{total_prompts}...")
-        
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        # Generate k samples in one call using num_return_sequences
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=768,
-            temperature=1.0,
-            top_p=0.95,
-            do_sample=True,
-            num_return_sequences=k,  # Generate all k samples at once
-            pad_token_id=tokenizer.eos_token_id,
-        )
-        
-        # Process all k outputs
-        z_list = []
-        for output in outputs:
-            generated_text = tokenizer.decode(output, skip_special_tokens=True)
-            rationale = generated_text.split("Rationale:")[-1].strip()
-            # Stop at Problem: if it appears
-            if "\nProblem:" in rationale:
-                rationale = rationale.split("\nProblem:")[0].strip()
-            z_list.append(rationale)
+    for output in outputs:
+        z_list = [o.text.strip() for o in output.outputs]
         candidates.append(z_list)
     
-    print(f"  [5/5] Generation complete: {len(candidates)} triples, {sum(len(c) for c in candidates)} total candidates")
+    print(f"  Generation complete: {len(candidates)} triples, {sum(len(c) for c in candidates)} total candidates")
     
-    # Cleanup
-    print("  Cleaning up...")
-    del model
+    # Clean up vLLM to free VRAM for M-step training
+    print("  Cleaning up vLLM engine...")
+    del llm
     gc.collect()
     torch.cuda.empty_cache()
     print("  Cleanup complete")
