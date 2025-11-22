@@ -79,6 +79,7 @@ def train_model(mode, output_dir, hf_path, dataset):
         use_gradient_checkpointing="unsloth",
         random_state=3407,
         use_rslora=False,
+        modules_to_save=["embed_tokens", "lm_head"],
     )
     
     # Load Phase 0 Adapters from HuggingFace
