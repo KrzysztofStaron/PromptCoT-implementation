@@ -115,23 +115,152 @@ def check_structure_and_tags(text):
     return True
 
 def compute_reward(model, tokenizer, c, x, z):
-    """Compute reward as negative log-likelihood of the full sequence."""
+    """Compute reward as log p_θ(x|z,c) + log p_θ(z|c).
+    
+    Reward = -(loss_x + loss_z) where:
+    - loss_x = NLL of problem given concepts and rationale
+    - loss_z = NLL of rationale given concepts
+    
+    Bad structure gets penalty of -100.0 to ensure it's always worse than valid generation.
+    """
     if not check_structure_and_tags(z):
-        return -10.0
+        return -100.0  # Large penalty to ensure bad structure is always worse than valid generation
         
     try:
-        full_text = f"Concepts: {c}\nRationale: {z}\nProblem: {x}"
-        inputs = tokenizer(full_text, return_tensors="pt").to("cuda")
+        # Compute log p_θ(x | z, c)
+        input_x = tokenizer(
+            f"Concepts: {c}\nRationale: {z}\nProblem: {x}",
+            return_tensors="pt"
+        )
+        input_x = {k: v.to(model.device) for k, v in input_x.items()}
         
         with torch.no_grad():
-            outputs = model(**inputs, labels=inputs["input_ids"])
-            loss = outputs.loss
-            
-        return -loss.item()
+            loss_x = model(**input_x, labels=input_x["input_ids"]).loss
+        del input_x  # Free memory immediately
+        
+        # Compute log p_θ(z | c)
+        input_z = tokenizer(
+            f"Concepts: {c}\nRationale: {z}",
+            return_tensors="pt"
+        )
+        input_z = {k: v.to(model.device) for k, v in input_z.items()}
+        
+        with torch.no_grad():
+            loss_z = model(**input_z, labels=input_z["input_ids"]).loss
+        del input_z  # Free memory immediately
+        
+        # Reward = log p_θ(x|z,c) + log p_θ(z|c) = -(loss_x + loss_z)
+        reward = -(loss_x.item() + loss_z.item())
+        return reward
         
     except Exception as e:
         log.error(f"Reward comp error: {e}")
-        return -10.0
+        return -100.0  # Same large penalty on error
+
+def compute_rewards_batched(model, tokenizer, batch_data, device):
+    """Compute rewards for a batch of (concepts, problems, rationales) in parallel.
+    
+    Args:
+        model: The model to use for scoring
+        tokenizer: Tokenizer
+        batch_data: List of tuples (c, x, z) where c=concepts, x=problem, z=rationale
+        device: Device to run on
+    
+    Returns:
+        List of rewards (same length as batch_data)
+    """
+    if not batch_data:
+        return []
+    
+    # Separate valid and invalid (bad structure) items
+    valid_items = []
+    valid_indices = []
+    invalid_indices = []
+    
+    for i, (c, x, z) in enumerate(batch_data):
+        if check_structure_and_tags(z):
+            valid_items.append((c, x, z))
+            valid_indices.append(i)
+        else:
+            invalid_indices.append(i)
+    
+    # Initialize rewards with -100.0 for invalid items
+    rewards = [-100.0] * len(batch_data)
+    
+    if not valid_items:
+        return rewards
+    
+    try:
+        # Prepare batched inputs for loss_x: "Concepts: {c}\nRationale: {z}\nProblem: {x}"
+        texts_x = [f"Concepts: {c}\nRationale: {z}\nProblem: {x}" for c, x, z in valid_items]
+        inputs_x = tokenizer(texts_x, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
+        inputs_x = {k: v.to(device) for k, v in inputs_x.items()}
+        
+        # Set pad_token_id if not already set
+        pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        
+        with torch.no_grad():
+            outputs_x = model(**inputs_x, labels=inputs_x["input_ids"])
+            # Get per-sample losses (reduction='none' then mean per sequence)
+            # The model returns average loss, but we need per-sample
+            # We'll compute it manually from logits
+            logits_x = outputs_x.logits
+            labels_x = inputs_x["input_ids"]
+            shift_logits_x = logits_x[..., :-1, :].contiguous()
+            shift_labels_x = labels_x[..., 1:].contiguous()
+            
+            # Compute per-sample loss
+            loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=pad_token_id)
+            flat_shift_logits_x = shift_logits_x.view(-1, shift_logits_x.size(-1))
+            flat_shift_labels_x = shift_labels_x.view(-1)
+            flat_losses_x = loss_fct(flat_shift_logits_x, flat_shift_labels_x)
+            
+            # Reshape and compute mean per sequence (ignoring padding)
+            losses_x = flat_losses_x.view(shift_labels_x.shape)
+            # Mask out padding tokens
+            mask_x = (shift_labels_x != pad_token_id).float()
+            per_sample_loss_x = (losses_x * mask_x).sum(dim=1) / mask_x.sum(dim=1).clamp(min=1)
+        
+        del inputs_x, outputs_x, logits_x, labels_x
+        
+        # Prepare batched inputs for loss_z: "Concepts: {c}\nRationale: {z}"
+        texts_z = [f"Concepts: {c}\nRationale: {z}" for c, x, z in valid_items]
+        inputs_z = tokenizer(texts_z, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
+        inputs_z = {k: v.to(device) for k, v in inputs_z.items()}
+        
+        with torch.no_grad():
+            outputs_z = model(**inputs_z, labels=inputs_z["input_ids"])
+            logits_z = outputs_z.logits
+            labels_z = inputs_z["input_ids"]
+            shift_logits_z = logits_z[..., :-1, :].contiguous()
+            shift_labels_z = labels_z[..., 1:].contiguous()
+            
+            # Compute per-sample loss
+            flat_shift_logits_z = shift_logits_z.view(-1, shift_logits_z.size(-1))
+            flat_shift_labels_z = shift_labels_z.view(-1)
+            flat_losses_z = loss_fct(flat_shift_logits_z, flat_shift_labels_z)
+            
+            # Reshape and compute mean per sequence
+            losses_z = flat_losses_z.view(shift_labels_z.shape)
+            mask_z = (shift_labels_z != pad_token_id).float()
+            per_sample_loss_z = (losses_z * mask_z).sum(dim=1) / mask_z.sum(dim=1).clamp(min=1)
+        
+        del inputs_z, outputs_z, logits_z, labels_z
+        
+        # Compute rewards: -(loss_x + loss_z)
+        valid_rewards = -(per_sample_loss_x.cpu() + per_sample_loss_z.cpu()).tolist()
+        
+        # Assign rewards to valid items
+        for idx, reward in zip(valid_indices, valid_rewards):
+            rewards[idx] = reward
+            
+    except Exception as e:
+        log.error(f"Batched reward comp error: {e}")
+        # On error, all valid items get -100.0 penalty
+        for idx in valid_indices:
+            rewards[idx] = -100.0
+    
+    return rewards
 
 # --- Data Loader ---
 def load_initial_triples():
@@ -254,26 +383,55 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
 
     FastLanguageModel.for_inference(p_model)
     
-    new_triples = []
+    # Flatten all candidates for batched processing
+    # Structure: (triple_idx, candidate_idx, concepts, problem, rationale)
+    flat_candidates = []
+    triple_indices = []  # Track which triple each candidate belongs to
     
     for i, t in enumerate(triples):
         c = t['concepts']
         x = t['problem']
-        z_list = candidates[i] # list of k strings
-        
-        scores = []
+        z_list = candidates[i]
         for z in z_list:
-            score = compute_reward(p_model, tokenizer, c, x, z)
-            scores.append(score)
+            flat_candidates.append((c, x, z))
+            triple_indices.append(i)
+    
+    total_candidates = len(flat_candidates)
+    print(f"  Computing rewards for {total_candidates} candidates in batches...")
+    
+    # Process in batches
+    BATCH_SIZE_REWARD = 64  # Batch size for reward computation
+    all_rewards = []
+    
+    for batch_start in range(0, total_candidates, BATCH_SIZE_REWARD):
+        batch_end = min(batch_start + BATCH_SIZE_REWARD, total_candidates)
+        batch_data = flat_candidates[batch_start:batch_end]
+        
+        # Progress logging
+        if (batch_start // BATCH_SIZE_REWARD + 1) % 10 == 0 or batch_end == total_candidates:
+            print(f"    Processing batch {batch_start // BATCH_SIZE_REWARD + 1}/{(total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD} "
+                  f"({batch_end}/{total_candidates} candidates, {100 * batch_end / total_candidates:.1f}%)")
+        
+        batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device)
+        all_rewards.extend(batch_rewards)
+    
+    # Reconstruct scores per triple and select best
+    new_triples = []
+    reward_idx = 0
+    
+    for i, t in enumerate(triples):
+        k = len(candidates[i])
+        scores = all_rewards[reward_idx:reward_idx + k]
+        reward_idx += k
         
         # Select best
         best_idx = scores.index(max(scores))
-        best_z = z_list[best_idx]
+        best_z = candidates[i][best_idx]
         
         new_triples.append({
-            "concepts": c,
+            "concepts": t['concepts'],
             "rationale": best_z,
-            "problem": x
+            "problem": t['problem']
         })
         
     # Cleanup p_model
