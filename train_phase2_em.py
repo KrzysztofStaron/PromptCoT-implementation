@@ -190,12 +190,13 @@ def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128
     if not valid_items:
         return rewards
     
-    try:
-        # Process in batches
-        for batch_start in range(0, len(valid_items), batch_size):
-            batch_end = min(batch_start + batch_size, len(valid_items))
-            batch_valid = valid_items[batch_start:batch_end]
-            
+    # Process in batches - each batch in its own try-except to handle OOM gracefully
+    for batch_start in range(0, len(valid_items), batch_size):
+        batch_end = min(batch_start + batch_size, len(valid_items))
+        batch_valid = valid_items[batch_start:batch_end]
+        batch_indices = valid_indices[batch_start:batch_end]
+        
+        try:
             # Prepare batched inputs for loss_x: "Concepts: {c}\nRationale: {z}\nProblem: {x}"
             texts_x = [f"Concepts: {c}\nRationale: {z}\nProblem: {x}" for c, x, z in batch_valid]
             inputs_x = tokenizer(texts_x, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
@@ -224,7 +225,7 @@ def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128
                 per_sample_loss_x = (losses_x * mask_x).sum(dim=1) / mask_x.sum(dim=1).clamp(min=1)
             
             # Move to CPU and delete immediately to free GPU memory
-            per_sample_loss_x_cpu = per_sample_loss_x.cpu()
+            per_sample_loss_x_cpu = per_sample_loss_x.cpu().clone()
             del inputs_x, outputs_x, logits_x, labels_x, shift_logits_x, shift_labels_x, flat_shift_logits_x, flat_shift_labels_x, losses_x, mask_x, per_sample_loss_x
             torch.cuda.empty_cache()
             
@@ -251,23 +252,33 @@ def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128
                 per_sample_loss_z = (losses_z * mask_z).sum(dim=1) / mask_z.sum(dim=1).clamp(min=1)
             
             # Move to CPU and delete immediately
-            per_sample_loss_z_cpu = per_sample_loss_z.cpu()
+            per_sample_loss_z_cpu = per_sample_loss_z.cpu().clone()
             del inputs_z, outputs_z, logits_z, labels_z, shift_logits_z, shift_labels_z, flat_shift_logits_z, flat_shift_labels_z, losses_z, mask_z, per_sample_loss_z
             torch.cuda.empty_cache()
+            
+            # Verify we have valid tensors before computing rewards
+            if not isinstance(per_sample_loss_x_cpu, torch.Tensor) or not isinstance(per_sample_loss_z_cpu, torch.Tensor):
+                raise ValueError(f"Invalid tensor types: loss_x={type(per_sample_loss_x_cpu)}, loss_z={type(per_sample_loss_z_cpu)}")
             
             # Compute rewards: -(loss_x + loss_z) - already on CPU
             batch_rewards = -(per_sample_loss_x_cpu + per_sample_loss_z_cpu).tolist()
             del per_sample_loss_x_cpu, per_sample_loss_z_cpu
             
             # Assign rewards to valid items
-            for idx, reward in zip(valid_indices[batch_start:batch_end], batch_rewards):
+            for idx, reward in zip(batch_indices, batch_rewards):
                 rewards[idx] = reward
                 
-    except Exception as e:
-        log.error(f"Batched reward comp error: {e}")
-        # On error, all valid items get -100.0 penalty
-        for idx in valid_indices:
-            rewards[idx] = -100.0
+        except torch.cuda.OutOfMemoryError as e:
+            log.error(f"OOM in reward batch {batch_start//batch_size + 1}: {e}")
+            # Clear cache and assign penalty to this batch
+            torch.cuda.empty_cache()
+            for idx in batch_indices:
+                rewards[idx] = -100.0
+        except Exception as e:
+            log.error(f"Error in reward batch {batch_start//batch_size + 1}: {e}")
+            # Assign penalty to this batch
+            for idx in batch_indices:
+                rewards[idx] = -100.0
     
     return rewards
 
