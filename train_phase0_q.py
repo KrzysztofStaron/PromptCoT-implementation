@@ -131,12 +131,7 @@ def main():
                         "gate_proj", "up_proj", "down_proj"],  # LoRA on transformer layers
         lora_alpha=64,  # Doubled to match higher rank
         lora_dropout=0,
-        bias="none",
         use_gradient_checkpointing="unsloth",
-        random_state=3407,
-        use_rslora=False,
-        loftq_config=None,
-        modules_to_save=["lm_head"],
     )
     
     # 3. Load and Format Dataset
