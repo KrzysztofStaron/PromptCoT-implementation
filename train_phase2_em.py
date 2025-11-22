@@ -31,6 +31,9 @@ from hf_config import HF_REPO_ID, HF_VERSION
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
+# Enable logits for Unsloth inference (needed for reward computation)
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
