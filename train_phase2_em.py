@@ -303,6 +303,7 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     print("E-Step: Generating Rationales...")
     
     # Load model with Unsloth
+    print("  [1/5] Loading base model...")
     model, tokenizer = FastLanguageModel.from_pretrained(
         MODEL_NAME,
         max_seq_length=MAX_SEQ_LENGTH,
@@ -310,31 +311,45 @@ def run_e_step_generation(triples, k, current_q_subfolder):
         load_in_4bit=LOAD_IN_4BIT,
         token=HF_TOKEN
     )
+    print("  [1/5] Base model loaded")
     
     # Load adapter
     adapter_path = None
     if os.path.exists(current_q_subfolder):
         adapter_path = current_q_subfolder
+        print(f"  [2/5] Adapter found locally: {adapter_path}")
     else:
-        print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
+        print(f"  [2/5] Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
         try:
             downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*", token=HF_TOKEN)
             adapter_path = os.path.join(downloaded_path, current_q_subfolder)
+            print(f"  [2/5] Adapter downloaded successfully")
         except Exception as e:
-            print(f"Warning: Could not download {current_q_subfolder}: {e}")
+            print(f"  [2/5] Warning: Could not download {current_q_subfolder}: {e}")
             adapter_path = current_q_subfolder
     
     if adapter_path and os.path.exists(adapter_path):
+        print(f"  [3/5] Loading adapter from {adapter_path}...")
         model.load_adapter(adapter_path)
+        print("  [3/5] Adapter loaded successfully")
+    else:
+        print("  [3/5] No adapter found, using base model")
     
+    print("  [4/5] Preparing model for inference...")
     FastLanguageModel.for_inference(model)
+    print("  [4/5] Model ready for inference")
     
     # Batch generation: prepare all prompts and generate k samples for each in parallel
+    print(f"  [5/5] Preparing {len(triples)} prompts, generating {k} samples per prompt...")
     prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
     # Generate k samples for all triples in batches
     candidates = []
-    for prompt in prompts:
+    total_prompts = len(prompts)
+    for idx, prompt in enumerate(prompts):
+        if (idx + 1) % 5 == 0 or idx == 0 or idx == total_prompts - 1:
+            print(f"    Generating for prompt {idx + 1}/{total_prompts}...")
+        
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
         # Generate k samples in one call using num_return_sequences
         outputs = model.generate(
@@ -358,18 +373,25 @@ def run_e_step_generation(triples, k, current_q_subfolder):
             z_list.append(rationale)
         candidates.append(z_list)
     
+    print(f"  [5/5] Generation complete: {len(candidates)} triples, {sum(len(c) for c in candidates)} total candidates")
+    
     # Cleanup
+    print("  Cleaning up...")
     del model
     gc.collect()
     torch.cuda.empty_cache()
+    print("  Cleanup complete")
     
     return candidates
 
 def run_e_step_selection(triples, candidates, current_p_subfolder):
     """Run E-Step: Select Best Rationales using p_theta."""
     print("E-Step: Selecting Best Rationales...")
+    print(f"  Computing rewards for {len(triples)} triples with {sum(len(c) for c in candidates)} total candidates")
+    
     # Load p_theta for scoring
     # Use Unsloth for efficient inference scoring
+    print("  Loading p_theta model...")
     p_model, tokenizer = FastLanguageModel.from_pretrained(
         MODEL_NAME,
         max_seq_length=MAX_SEQ_LENGTH,
@@ -377,9 +399,10 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
         load_in_4bit=LOAD_IN_4BIT,
         token=HF_TOKEN
     )
+    print("  p_theta model loaded")
     
     # Load adapter
-    print(f"Loading p_theta adapter from {HF_REPO_ID} subfolder {current_p_subfolder}")
+    print(f"  Loading p_theta adapter from {HF_REPO_ID} subfolder {current_p_subfolder}")
     try:
          # Check if local or HF
          if os.path.exists(current_p_subfolder):
@@ -420,19 +443,20 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     
     # Process in batches
     BATCH_SIZE_REWARD = 64  # Batch size for reward computation
+    total_batches = (total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD
     all_rewards = []
     
     for batch_start in range(0, total_candidates, BATCH_SIZE_REWARD):
         batch_end = min(batch_start + BATCH_SIZE_REWARD, total_candidates)
         batch_data = flat_candidates[batch_start:batch_end]
+        batch_num = batch_start // BATCH_SIZE_REWARD + 1
         
         # Progress logging
-        if (batch_start // BATCH_SIZE_REWARD + 1) % 10 == 0 or batch_end == total_candidates:
-            print(f"    Processing batch {batch_start // BATCH_SIZE_REWARD + 1}/{(total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD} "
-                  f"({batch_end}/{total_candidates} candidates, {100 * batch_end / total_candidates:.1f}%)")
+        print(f"    Processing reward batch {batch_num}/{total_batches} ({batch_end}/{total_candidates} candidates, {100 * batch_end / total_candidates:.1f}%)")
         
         batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, BATCH_SIZE_REWARD)
         all_rewards.extend(batch_rewards)
+        print(f"    Completed batch {batch_num}/{total_batches}")
     
     # Reconstruct scores per triple and select best
     new_triples = []
@@ -466,13 +490,18 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     Simplified approach: Just load base model and apply fresh LoRA (no merging).
     This avoids dtype mismatches and PEFT config conflicts.
     """
+    print(f"  Training step: {run_name}")
+    print(f"  Training on {len(texts)} examples")
+    
     # Load base model fresh each time
+    print("  Loading base model...")
     model, tokenizer = FastLanguageModel.from_pretrained(
         MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
     )
+    print("  Base model loaded")
     
     # Apply fresh LoRA directly on base model
-    print("Applying fresh LoRA adapter on base model...")
+    print("  Applying fresh LoRA adapter on base model...")
     model = FastLanguageModel.get_peft_model(
         model,
         r=64,
@@ -487,9 +516,13 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     )
     
     FastLanguageModel.for_training(model)
+    print("  Model prepared for training")
     
+    print("  Preparing dataset...")
     ds = Dataset.from_dict({"text": texts})
+    print(f"  Dataset prepared: {len(ds)} examples")
     
+    print("  Starting training...")
     training_args = TrainingArguments(
         per_device_train_batch_size=128, # Optimized for H200 NVL (141GB VRAM) - increased for better utilization
         gradient_accumulation_steps=2,  # Effective batch size = 128 * 2 = 256
@@ -510,8 +543,12 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         max_seq_length=MAX_SEQ_LENGTH, packing=True, args=training_args
     )
     trainer.train()
+    print("  Training complete")
+    
+    print(f"  Saving model to {output_path}...")
     model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
+    print("  Model saved")
     
     # Upload
     if HF_TOKEN and not args.no_upload:
