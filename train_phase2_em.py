@@ -286,51 +286,53 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     return new_triples
 
 def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
-    """Run a single training step (SFT) for either p_theta or q_phi."""
+    """Run a single training step (SFT) for either p_theta or q_phi.
+    
+    Strategy: Load base model, load adapter, merge weights, then apply fresh LoRA.
+    """
     model, tokenizer = FastLanguageModel.from_pretrained(
         MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
     )
     
-    loaded_adapter = False
+    # Try to load and merge existing adapter
+    adapter_merged = False
     try:
-        # Try loading existing adapter
+        adapter_path = None
         if os.path.exists(base_adapter_subfolder):
             adapter_path = base_adapter_subfolder
-            model.load_adapter(adapter_path)
-            loaded_adapter = True
         else:
             # Download adapter from HF if not available locally
             print(f"Downloading adapter from {HF_REPO_ID} subfolder {base_adapter_subfolder}...")
             try:
                 downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{base_adapter_subfolder}/*", token=HF_TOKEN)
                 adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
-                model.load_adapter(adapter_path)
-                loaded_adapter = True
             except Exception as e:
-                print(f"Adapter download/load failed: {e}")
-                pass
+                print(f"Adapter download failed: {e}")
+        
+        if adapter_path and os.path.exists(adapter_path):
+            print(f"Loading adapter from {adapter_path}...")
+            model.load_adapter(adapter_path)
+            print("Merging adapter weights into base model...")
+            model = model.merge_and_unload()
+            adapter_merged = True
+            print("✓ Adapter merged successfully")
     except Exception as e:
-        print(f"Adapter load failed: {e}")
-
-    if loaded_adapter:
-        print(f"Resumed adapter from {base_adapter_subfolder}")
-        FastLanguageModel.for_training(model)
-    else:
-        print("Initializing NEW LoRA adapter")
-        # Add LoRA config
-        model = FastLanguageModel.get_peft_model(
-            model,
-            r=64,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
-                            "gate_proj", "up_proj", "down_proj",
-                            ],
-            lora_alpha=32,
-            lora_dropout=0,
-            bias="none",
-            use_gradient_checkpointing="unsloth",
-            random_state=3407,
-            use_rslora=False,
-        )
+        print(f"Adapter load/merge failed: {e}, starting from base model")
+    
+    # Now apply fresh LoRA on top (either on merged model or base model)
+    print("Applying fresh LoRA adapter...")
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=64,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_alpha=32,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing=False,  # Disable gradient checkpointing
+        random_state=3407,
+        use_rslora=False,
+    )
     
     FastLanguageModel.for_training(model)
     
@@ -348,6 +350,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         report_to="wandb",
         run_name=run_name,
         dataloader_num_workers=8,  # Faster data loading for better GPU utilization
+        gradient_checkpointing=False,  # Explicitly disable gradient checkpointing
     )
     
     trainer = SFTTrainer(
