@@ -5,7 +5,8 @@
 
 import os
 import re
-from unsloth import FastLanguageModel
+import sys
+#from unsloth import FastLanguageModel
 from transformers import TrainingArguments
 from trl import SFTTrainer
 from datasets import load_dataset
@@ -25,6 +26,9 @@ LOAD_IN_4BIT = True
 
 OUTPUT_DIR = f"./models/{HF_VERSION}/joint"
 HF_OUTPUT_PATH = f"{HF_VERSION}/joint"
+
+# TEST MODE FLAG
+TEST_DATASET_ONLY = "--test-dataset" in sys.argv
 
 # --- Dataset Parsing ---
 def parse_promptcot_dataset(examples):
@@ -73,6 +77,43 @@ def parse_promptcot_dataset(examples):
 def main():
     print(f"🚀 Starting Phase 0: Joint Training on {MODEL_NAME}")
     
+    # TEST MODE: Skip model loading, just process and log dataset
+    if TEST_DATASET_ONLY:
+        print("\n" + "="*60)
+        print("TEST MODE: Dataset Processing Only")
+        print("="*60 + "\n")
+        
+        # Load and Format Dataset (small sample)
+        print("Loading xl-zhao/PromptCoT-Problem-Generation-Dataset (first 100 samples)...")
+        dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train[:100]")
+        print(f"Original size: {len(dataset)}")
+        
+        dataset = dataset.map(parse_promptcot_dataset, batched=True, remove_columns=dataset.column_names)
+        print(f"Formatted size: {len(dataset)}")
+        
+        # Log first 3 examples
+        print("\n" + "="*60)
+        print("SAMPLE PROCESSED EXAMPLES:")
+        print("="*60)
+        for i in range(min(3, len(dataset))):
+            print(f"\n--- Example {i+1} ---")
+            print(dataset[i]['text'])
+            print("\n" + "-"*60)
+        
+        # Log statistics
+        print("\n" + "="*60)
+        print("DATASET STATISTICS:")
+        print("="*60)
+        lengths = [len(text) for text in dataset['text']]
+        print(f"Total examples: {len(dataset)}")
+        print(f"Avg length (chars): {sum(lengths)/len(lengths):.1f}")
+        print(f"Min length: {min(lengths)}")
+        print(f"Max length: {max(lengths)}")
+        
+        print("\n✅ Dataset test complete! Remove --test-dataset flag to train.")
+        return
+    
+    # NORMAL MODE: Full training
     # 1. Load Model
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_NAME,

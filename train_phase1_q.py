@@ -1,8 +1,7 @@
-# train_phase1_split.py
-# Phase 1: Split Warm-Start (3-4 hrs)
-# Goal: Specialize p_theta and q_phi from Phase 0 model.
+# train_phase1_q.py
+# Phase 1: Rationale Model Training (q_phi only) (2 hrs)
+# Goal: Specialize q_phi from Phase 0 model.
 # Action:
-#   - p_theta (Prompt Model): Train on Concepts -> Rationale -> Problem
 #   - q_phi (Rationale Model): Train on Concepts + Problem -> Rationale
 
 import os
@@ -20,45 +19,18 @@ load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # --- Config ---
-BASE_MODEL_PATH = f"./models/{HF_VERSION}/joint" # Load from Phase 0 local save
-# If not local, load from HF: f"{HF_REPO_ID}/{HF_VERSION}/joint" (requires adapter merging or loading adapter on base)
-# Since we run in sequence on cloud, local path is best.
+# Load from HuggingFace Phase 0 output
+BASE_MODEL_PATH = f"{HF_REPO_ID}/{HF_VERSION}/joint" 
 
 MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B" # The base model
 MAX_SEQ_LENGTH = 8192
 DTYPE = None
 LOAD_IN_4BIT = True
 
-OUTPUT_DIR_P = f"./models/{HF_VERSION}/p/cold-start"
 OUTPUT_DIR_Q = f"./models/{HF_VERSION}/q/cold-start"
-
-HF_PATH_P = f"{HF_VERSION}/p/cold-start"
 HF_PATH_Q = f"{HF_VERSION}/q/cold-start"
 
 # --- Dataset Parsing ---
-def parse_p_theta(examples):
-    # p_theta: Concepts -> Rationale -> Problem (Same as Phase 0)
-    # "Concepts: {c}\nRationale: {r}\nProblem: {p}"
-    prompts = examples['prompt']
-    completions = examples['completion']
-    texts = []
-    for p, c in zip(prompts, completions):
-        concepts_match = re.search(r"Foundational Concepts:(.*?)Difficulty Level:", p, re.DOTALL)
-        if concepts_match:
-            concepts_cleaned = re.sub(r"\d+\.\s*", "", concepts_match.group(1).strip())
-            concepts_cleaned = " | ".join([line.strip() for line in concepts_cleaned.split('\n') if line.strip()])
-        else:
-            concepts_cleaned = p
-            
-        # Robust regex for Rationale
-        rationale_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)(?:<!-- END RATIONALE -->|(?=<!-- BEGIN PROBLEM -->))", c, re.DOTALL)
-        problem_match = re.search(r"<!-- BEGIN PROBLEM -->(.*?)<!-- END PROBLEM -->", c, re.DOTALL)
-        
-        if rationale_match and problem_match:
-            text = f"Concepts: {concepts_cleaned}\nRationale: {rationale_match.group(1).strip()}\nProblem: {problem_match.group(1).strip()}"
-            texts.append(text)
-    return {"text": texts}
-
 def parse_q_phi(examples):
     # q_phi: Concepts + Problem -> Rationale
     # "Concepts: {c}\nProblem: {p}\nRationale: {r}"
@@ -109,10 +81,15 @@ def train_model(mode, output_dir, hf_path, dataset):
         use_rslora=False,
     )
     
-    # Load Phase 0 Adapters
+    # Load Phase 0 Adapters from HuggingFace
     print(f"Loading Phase 0 adapters from {BASE_MODEL_PATH}")
-    model.load_adapter(BASE_MODEL_PATH)
-    
+    try:
+        model.load_adapter(BASE_MODEL_PATH)
+    except Exception as e:
+        print(f"Error loading adapter from HF: {e}")
+        print("Ensure Phase 0 has finished uploading and the path is correct.")
+        return
+
     # Ensure model is in training mode
     FastLanguageModel.for_training(model)
     
@@ -167,19 +144,15 @@ def train_model(mode, output_dir, hf_path, dataset):
     torch.cuda.empty_cache()
 
 def main():
-    print("🚀 Starting Phase 1: Split Warm-Start")
+    print("🚀 Starting Phase 1: Rationale Model Training (q_phi)")
     
     # Load Data
     print("Loading dataset...")
     ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train")
     
-    # Prepare Datasets
-    print("Formatting datasets...")
-    ds_p = ds.map(parse_p_theta, batched=True, remove_columns=ds.column_names)
+    # Prepare Dataset
+    print("Formatting dataset for q_phi...")
     ds_q = ds.map(parse_q_phi, batched=True, remove_columns=ds.column_names)
-    
-    # Train p_theta
-    train_model("p_theta", OUTPUT_DIR_P, HF_PATH_P, ds_p)
     
     # Train q_phi
     train_model("q_phi", OUTPUT_DIR_Q, HF_PATH_Q, ds_q)

@@ -40,10 +40,14 @@ BATCH_SIZE = 8 # Adjusted for H100 & 7B model size
 GRAD_ACCUM = 4
 
 # Paths
-COLD_START_P = f"./models/{HF_VERSION}/p/cold-start"
-COLD_START_Q = f"./models/{HF_VERSION}/q/cold-start"
+# We load models from HuggingFace directly
+HF_JOINT_PATH = f"{HF_REPO_ID}/{HF_VERSION}/joint"
+HF_COLD_START_Q = f"{HF_REPO_ID}/{HF_VERSION}/q/cold-start"
 
-# HF Paths
+# Local cache/output paths for iterations
+OUTPUT_DIR_BASE = f"./models/{HF_VERSION}"
+
+# HF Paths for uploads
 HF_P_BASE = f"{HF_VERSION}/p/"
 HF_Q_BASE = f"{HF_VERSION}/q/"
 
@@ -165,12 +169,12 @@ def main():
     from vllm import LLM, SamplingParams
     print("Initializing vLLM...")
     # We need to load the current q_phi model into vLLM.
-    # In Iter 1, it's COLD_START_Q.
+    # In Iter 1, it's HF_COLD_START_Q (Rationale Model).
     # vLLM supports LoRA. We load base model + LoRA.
     
-    # Setup paths
-    current_q_path = COLD_START_Q
-    current_p_path = COLD_START_P
+    # Setup paths - initial iteration uses HF paths
+    current_q_path = HF_COLD_START_Q
+    current_p_path = HF_JOINT_PATH # p_theta starts as the joint model from Phase 0
     
     # Load Triples
     triples = load_initial_triples()
@@ -202,6 +206,19 @@ def main():
         # Generate
         llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128) 
         # We need to pass the adapter path.
+        # For the first iteration, if loading from HF, we might need to download or rely on vLLM handling HF repo IDs.
+        # vLLM's LoRARequest takes a path. If it's an HF Hub path, vLLM might expect a local path or automatic download.
+        # If current_q_path is an HF ID (PanzerBread/...), vLLM usually requires a local directory for LoRA.
+        # We might need to snapshot_download it if it's not local.
+        
+        from huggingface_hub import snapshot_download
+        if not os.path.exists(current_q_path) and "/" in current_q_path:
+             print(f"Downloading adapter from {current_q_path}...")
+             try:
+                 current_q_path = snapshot_download(repo_id=current_q_path)
+             except Exception as e:
+                 print(f"Warning: Could not download {current_q_path}: {e}")
+        
         from vllm.lora.request import LoRARequest
         lora_req = LoRARequest("q_adapter", 1, current_q_path)
         
