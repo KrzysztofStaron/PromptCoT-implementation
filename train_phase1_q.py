@@ -102,8 +102,8 @@ def train_model(mode, output_dir, hf_path, dataset):
 
     # Training Args
     training_args = TrainingArguments(
-        per_device_train_batch_size=8,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=16,  # Matches Phase 0
+        gradient_accumulation_steps=8,   # Matches Phase 0 (effective batch size = 128)
         warmup_steps=50,
         num_train_epochs=3, # Phase 1 requirement
         learning_rate=1e-4, # Slightly lower LR for refinement
