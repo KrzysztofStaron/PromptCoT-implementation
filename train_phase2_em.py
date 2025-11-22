@@ -310,12 +310,17 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
                 print(f"Adapter download failed: {e}")
         
         if adapter_path and os.path.exists(adapter_path):
+            from peft import PeftModel
             print(f"Loading adapter from {adapter_path}...")
-            model.load_adapter(adapter_path)
+            # Load as PEFT model so we can merge
+            peft_model = PeftModel.from_pretrained(model, adapter_path)
             print("Merging adapter weights into base model...")
-            model = model.merge_and_unload()
+            model = peft_model.merge_and_unload()
             adapter_merged = True
             print("✓ Adapter merged successfully")
+            del peft_model
+            gc.collect()
+            torch.cuda.empty_cache()
     except Exception as e:
         print(f"Adapter load/merge failed: {e}, starting from base model")
     
