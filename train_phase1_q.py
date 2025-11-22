@@ -122,7 +122,6 @@ def train_model(mode, output_dir, hf_path, dataset):
         dataset_text_field="text",
         max_seq_length=MAX_SEQ_LENGTH,
         dataset_num_proc=2,
-        packing=True, # Pack for efficiency
         args=training_args,
     )
     
