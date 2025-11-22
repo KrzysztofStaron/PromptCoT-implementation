@@ -97,8 +97,8 @@ def main():
     )
     
     # 3. Load and Format Dataset
-    print("Loading xl-zhao/PromptCoT-Problem-Generation-Dataset (First 40k)...")
-    dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train[:40000]")
+    print("Loading xl-zhao/PromptCoT-Problem-Generation-Dataset...")
+    dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train")
     print(f"Original size: {len(dataset)}")
     
     dataset = dataset.map(parse_promptcot_dataset, batched=True, remove_columns=dataset.column_names)
