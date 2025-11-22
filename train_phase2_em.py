@@ -315,13 +315,13 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     
     ds = Dataset.from_dict({"text": texts})
     
-    args = TrainingArguments(
+    training_args = TrainingArguments(
         per_device_train_batch_size=64, # Optimized for H200 NVL (143GB VRAM) - increased from 32
         gradient_accumulation_steps=2,  # Effective batch size = 64 * 2 = 128
         num_train_epochs=1, # Plan requirement
         learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
-        fp16=not torch.cuda.is_bf16_supported(),
-        bf16=torch.cuda.is_bf16_supported(),
+        fp16=True,  # Force fp16 to avoid dtype mismatch with LoRA weights
+        bf16=False,  # Disable bf16 to prevent dtype conflicts
         output_dir=output_path,
         optim="adamw_8bit",
         report_to="wandb",
@@ -332,7 +332,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     
     trainer = SFTTrainer(
         model=model, tokenizer=tokenizer, train_dataset=ds, dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LENGTH, packing=True, args=args
+        max_seq_length=MAX_SEQ_LENGTH, packing=True, args=training_args
     )
     trainer.train()
     model.save_pretrained(output_path)
