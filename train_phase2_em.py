@@ -35,6 +35,9 @@ from hf_config import HF_REPO_ID, HF_VERSION
 load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
+# Enable memory fragmentation fix to prevent OOM
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
@@ -442,8 +445,8 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     total_candidates = len(flat_candidates)
     print(f"  Computing rewards for {total_candidates} candidates in batches...")
     
-    # Process in batches
-    BATCH_SIZE_REWARD = 128  # Reduced from 256 to prevent OOM with seq_len=8192
+    # Process in batches - balanced size that worked sometimes with 128
+    BATCH_SIZE_REWARD = 96  # Compromise between speed and memory safety
     total_batches = (total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD
     all_rewards = []
     
@@ -455,7 +458,8 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
         # Progress logging
         print(f"    Processing reward batch {batch_num}/{total_batches} ({batch_end}/{total_candidates} candidates, {100 * batch_end / total_candidates:.1f}%)")
         
-        batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, BATCH_SIZE_REWARD)
+        # Use balanced batch size for actual computation (32 sequences at a time)
+        batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, batch_size=32)
         all_rewards.extend(batch_rewards)
         print(f"    Completed batch {batch_num}/{total_batches}")
     
