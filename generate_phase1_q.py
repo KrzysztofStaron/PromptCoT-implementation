@@ -4,6 +4,8 @@
 from unsloth import FastLanguageModel
 import torch
 import json
+import os
+from huggingface_hub import snapshot_download
 from hf_config import HF_REPO_ID, HF_VERSION
 
 # Ścieżka do modelu Phase 0
@@ -22,9 +24,21 @@ def main():
     )
     
     # Wczytaj adapter Phase 0
-    print(f"Wczytywanie adaptera z {REPO_ID} (subfolder: {SUBFOLDER})...")
-    model.load_adapter(REPO_ID, subfolder=SUBFOLDER, adapter_name="phase0")
-    model.set_adapter("phase0")
+    print(f"Pobieranie adaptera z {REPO_ID}/{SUBFOLDER}...")
+    try:
+        local_dir = snapshot_download(
+            repo_id=REPO_ID,
+            allow_patterns=[f"{SUBFOLDER}/*"],
+            local_dir="/workspace/lora_cache",
+        )
+        adapter_path = os.path.join(local_dir, SUBFOLDER)
+        
+        print(f"Wczytywanie adaptera z lokalnej ścieżki: {adapter_path}...")
+        model.load_adapter(adapter_path, adapter_name="phase0")
+        model.set_adapter("phase0")
+    except Exception as e:
+        print(f"Błąd podczas ładowania adaptera: {e}")
+        print("Próba kontynuacji bez adaptera (tylko model bazowy)...")
     
     # Ustaw do generowania
     FastLanguageModel.for_inference(model)
