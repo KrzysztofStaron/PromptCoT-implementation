@@ -71,7 +71,7 @@ def main():
     training_args = TrainingArguments(
         per_device_train_batch_size=80, 
         gradient_accumulation_steps=2,
-        warmup_steps=100,
+        warmup_steps=20,
         num_train_epochs=1,
         output_dir=OUTPUT_DIR,
         report_to="wandb",
