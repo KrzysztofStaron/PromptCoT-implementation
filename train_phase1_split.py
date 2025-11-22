@@ -50,7 +50,8 @@ def parse_p_theta(examples):
         else:
             concepts_cleaned = p
             
-        rationale_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)<!-- END RATIONALE -->", c, re.DOTALL)
+        # Robust regex for Rationale
+        rationale_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)(?:<!-- END RATIONALE -->|(?=<!-- BEGIN PROBLEM -->))", c, re.DOTALL)
         problem_match = re.search(r"<!-- BEGIN PROBLEM -->(.*?)<!-- END PROBLEM -->", c, re.DOTALL)
         
         if rationale_match and problem_match:
@@ -72,7 +73,8 @@ def parse_q_phi(examples):
         else:
             concepts_cleaned = p
             
-        rationale_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)<!-- END RATIONALE -->", c, re.DOTALL)
+        # Robust regex for Rationale
+        rationale_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)(?:<!-- END RATIONALE -->|(?=<!-- BEGIN PROBLEM -->))", c, re.DOTALL)
         problem_match = re.search(r"<!-- BEGIN PROBLEM -->(.*?)<!-- END PROBLEM -->", c, re.DOTALL)
         
         if rationale_match and problem_match:

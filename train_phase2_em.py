@@ -146,7 +146,7 @@ def load_initial_triples():
         concepts = " | ".join([line.strip() for line in concepts.split('\n') if line.strip()])
         
         # Rationale & Problem
-        r_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)<!-- END RATIONALE -->", c_text, re.DOTALL)
+        r_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)(?:<!-- END RATIONALE -->|(?=<!-- BEGIN PROBLEM -->))", c_text, re.DOTALL)
         p_match = re.search(r"<!-- BEGIN PROBLEM -->(.*?)<!-- END PROBLEM -->", c_text, re.DOTALL)
         
         if r_match and p_match:

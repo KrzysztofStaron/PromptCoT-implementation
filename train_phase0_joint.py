@@ -54,8 +54,9 @@ def parse_promptcot_dataset(examples):
             
         # Extract Rationale and Problem from Completion
         # Tags: <!-- BEGIN RATIONALE --> ... <!-- END RATIONALE --><!-- BEGIN PROBLEM --> ... <!-- END PROBLEM -->
+        # Robust regex to handle missing END RATIONALE tag (capture until BEGIN PROBLEM)
         
-        rationale_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)<!-- END RATIONALE -->", c, re.DOTALL)
+        rationale_match = re.search(r"<!-- BEGIN RATIONALE -->(.*?)(?:<!-- END RATIONALE -->|(?=<!-- BEGIN PROBLEM -->))", c, re.DOTALL)
         problem_match = re.search(r"<!-- BEGIN PROBLEM -->(.*?)<!-- END PROBLEM -->", c, re.DOTALL)
         
         if rationale_match and problem_match:
@@ -84,9 +85,9 @@ def main():
     # 2. Add LoRA Adapters
     model = FastLanguageModel.get_peft_model(
         model,
-        r=64, # Suggested for Phase 0
+        r=64, # Grok-4.1 Recipe: r=128
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=16,
+        lora_alpha=32,
         lora_dropout=0,
         bias="none",
         use_gradient_checkpointing="unsloth",
@@ -96,8 +97,8 @@ def main():
     )
     
     # 3. Load and Format Dataset
-    print("Loading xl-zhao/PromptCoT-Problem-Generation-Dataset...")
-    dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train")
+    print("Loading xl-zhao/PromptCoT-Problem-Generation-Dataset (First 10k)...")
+    dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train[:10000]")
     print(f"Original size: {len(dataset)}")
     
     dataset = dataset.map(parse_promptcot_dataset, batched=True, remove_columns=dataset.column_names)
@@ -105,8 +106,8 @@ def main():
     
     # 4. Training Arguments
     training_args = TrainingArguments(
-        per_device_train_batch_size=8,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=16, # Grok-4.1 Recipe: batch 16
+        gradient_accumulation_steps=8,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
         warmup_steps=100,
         max_steps=0, # Use epochs
         num_train_epochs=4, # Phase 0 requirement
