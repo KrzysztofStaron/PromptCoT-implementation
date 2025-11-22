@@ -5,6 +5,7 @@
 # - Reward: -loss + structure_penalty (missing fields/tags -> -10.0)
 # - Generation: Force prefix "\nRationale:" for q_phi
 
+from unsloth import FastLanguageModel
 import json
 import torch
 import gc
@@ -17,7 +18,6 @@ import sys
 import shutil
 import glob
 from transformers import AutoTokenizer, TrainingArguments, DataCollatorForLanguageModeling
-from unsloth import FastLanguageModel
 from datasets import Dataset, load_dataset
 from huggingface_hub import HfApi, create_repo, snapshot_download
 from dotenv import load_dotenv
