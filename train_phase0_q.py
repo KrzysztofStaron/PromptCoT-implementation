@@ -25,6 +25,7 @@ DTYPE = None # Auto-detect (BF16 on H100)
 LOAD_IN_4BIT = True
 
 HF_OUTPUT_PATH = f"{HF_VERSION}/q/cold-start"
+OUTPUT_DIR = f"./models/{HF_VERSION}/q/cold-start"
 
 # TEST MODE FLAG
 TEST_DATASET_ONLY = "--test-dataset" in sys.argv
@@ -135,7 +136,7 @@ def main():
         random_state=3407,
         use_rslora=False,
         loftq_config=None,
-        modules_to_save=None,
+        modules_to_save=["lm_head"],
     )
     
     # 3. Load and Format Dataset

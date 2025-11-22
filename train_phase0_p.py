@@ -136,7 +136,7 @@ def main():
         random_state=3407,
         use_rslora=False,
         loftq_config=None,
-        modules_to_save=None,
+        modules_to_save=["lm_head"],
     )
     
     # 3. Load and Format Dataset
