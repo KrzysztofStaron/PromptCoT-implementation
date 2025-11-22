@@ -45,7 +45,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BASE_NUM_TRIPLETS = 5000  # Base number of triples (used when k=3)
+BASE_NUM_TRIPLETS = 1  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
@@ -488,8 +488,7 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
 def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     """Run a single training step (SFT) for either p_theta or q_phi.
     
-    Simplified approach: Just load base model and apply fresh LoRA (no merging).
-    This avoids dtype mismatches and PEFT config conflicts.
+    Loads the previous adapter (or cold-start) and continues training from it.
     """
     print(f"  Training step: {run_name}")
     print(f"  Training on {len(texts)} examples")
@@ -501,20 +500,41 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     )
     print("  Base model loaded")
     
-    # Apply fresh LoRA directly on base model
-    print("  Applying fresh LoRA adapter on base model...")
+    # Apply LoRA adapter structure (matches Phase 0 configuration)
+    print("  Applying LoRA adapter structure...")
     model = FastLanguageModel.get_peft_model(
         model,
         r=64,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
                         "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=32,
+        lora_alpha=64,  # Matches Phase 0 for correct adapter loading
         lora_dropout=0,
         bias="none",
         use_gradient_checkpointing="unsloth",  # Enable gradient checkpointing to save memory
         random_state=3407,
         use_rslora=False,
     )
+    
+    # Load the pre-trained adapter (cold-start or previous iteration)
+    print(f"  Loading adapter from {base_adapter_subfolder}...")
+    try:
+        # Check if local or HF
+        if os.path.exists(base_adapter_subfolder):
+            adapter_path = base_adapter_subfolder
+            print(f"  Adapter found locally: {adapter_path}")
+        else:
+            # Download adapter from HF if not available locally
+            print(f"  Downloading adapter from {HF_REPO_ID} subfolder {base_adapter_subfolder}...")
+            downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{base_adapter_subfolder}/*", token=HF_TOKEN)
+            adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
+            print(f"  Adapter downloaded successfully")
+        
+        model.load_adapter(adapter_path, adapter_name="base_adapter")
+        model.set_adapter("base_adapter")
+        print("  Adapter loaded successfully")
+    except Exception as e:
+        print(f"  Warning: Could not load adapter {base_adapter_subfolder}: {e}")
+        print("  Training from scratch (no adapter loaded)")
     
     FastLanguageModel.for_training(model)
     print("  Model prepared for training")
