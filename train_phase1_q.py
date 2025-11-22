@@ -20,7 +20,8 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 # --- Config ---
 # Load from HuggingFace Phase 0 output
-BASE_MODEL_PATH = f"{HF_REPO_ID}/{HF_VERSION}/joint" 
+# Base path for Phase 0 adapter (subfolder in the repo)
+HF_PHASE0_SUBFOLDER = f"{HF_VERSION}/joint"
 
 MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B" # The base model
 MAX_SEQ_LENGTH = 8192
@@ -83,9 +84,9 @@ def train_model(mode, output_dir, hf_path, dataset):
     )
     
     # Load Phase 0 Adapters from HuggingFace
-    print(f"Loading Phase 0 adapters from {BASE_MODEL_PATH}")
+    print(f"Loading Phase 0 adapters from {HF_REPO_ID} (subfolder: {HF_PHASE0_SUBFOLDER})")
     try:
-        model.load_adapter(BASE_MODEL_PATH, adapter_name="phase0_adapter")
+        model.load_adapter(HF_REPO_ID, subfolder=HF_PHASE0_SUBFOLDER, adapter_name="phase0_adapter")
         model.set_adapter("phase0_adapter")
     except Exception as e:
         print(f"Error loading adapter from HF: {e}")

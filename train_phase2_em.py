@@ -41,8 +41,8 @@ GRAD_ACCUM = 4
 
 # Paths
 # We load models from HuggingFace directly
-HF_JOINT_PATH = f"{HF_REPO_ID}/{HF_VERSION}/joint"
-HF_COLD_START_Q = f"{HF_REPO_ID}/{HF_VERSION}/q/cold-start"
+HF_JOINT_SUBFOLDER = f"{HF_VERSION}/joint"
+HF_COLD_START_Q_SUBFOLDER = f"{HF_VERSION}/q/cold-start"
 
 # Local cache/output paths for iterations
 OUTPUT_DIR_BASE = f"./models/{HF_VERSION}"
@@ -173,8 +173,8 @@ def main():
     # vLLM supports LoRA. We load base model + LoRA.
     
     # Setup paths - initial iteration uses HF paths
-    current_q_path = HF_COLD_START_Q
-    current_p_path = HF_JOINT_PATH # p_theta starts as the joint model from Phase 0
+    current_q_subfolder = HF_COLD_START_Q_SUBFOLDER
+    current_p_subfolder = HF_JOINT_SUBFOLDER # p_theta starts as the joint model from Phase 0
     
     # Load Triples
     triples = load_initial_triples()
@@ -208,19 +208,29 @@ def main():
         # We need to pass the adapter path.
         # For the first iteration, if loading from HF, we might need to download or rely on vLLM handling HF repo IDs.
         # vLLM's LoRARequest takes a path. If it's an HF Hub path, vLLM might expect a local path or automatic download.
-        # If current_q_path is an HF ID (PanzerBread/...), vLLM usually requires a local directory for LoRA.
-        # We might need to snapshot_download it if it's not local.
+        # If we are using HF repo ID + subfolder, we need to download it first.
         
         from huggingface_hub import snapshot_download
-        if not os.path.exists(current_q_path) and "/" in current_q_path:
-             print(f"Downloading adapter from {current_q_path}...")
+        import os
+        
+        # Check if current_q is a local path or HF subfolder
+        if not os.path.exists(current_q_subfolder):
+             print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_q_subfolder}...")
              try:
-                 current_q_path = snapshot_download(repo_id=current_q_path)
+                 # Download specific subfolder
+                 q_adapter_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*")
+                 # The download returns the root cache dir, we need to append subfolder?
+                 # Actually snapshot_download returns the path to the folder.
+                 # But with allow_patterns, it preserves structure.
+                 q_adapter_path = os.path.join(q_adapter_path, current_q_subfolder)
              except Exception as e:
-                 print(f"Warning: Could not download {current_q_path}: {e}")
+                 print(f"Warning: Could not download {current_q_subfolder}: {e}")
+                 q_adapter_path = current_q_subfolder # Fallback
+        else:
+             q_adapter_path = current_q_subfolder
         
         from vllm.lora.request import LoRARequest
-        lora_req = LoRARequest("q_adapter", 1, current_q_path)
+        lora_req = LoRARequest("q_adapter", 1, q_adapter_path)
         
         params = SamplingParams(n=k, temperature=0.8, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
         
@@ -256,7 +266,19 @@ def main():
             load_in_4bit=LOAD_IN_4BIT,
             token=HF_TOKEN
         )
-        p_model.load_adapter(current_p_path)
+        
+        # Load adapter
+        print(f"Loading p_theta adapter from {HF_REPO_ID} subfolder {current_p_subfolder}")
+        try:
+             # Check if local or HF
+             if os.path.exists(current_p_subfolder):
+                 p_model.load_adapter(current_p_subfolder)
+             else:
+                 p_model.load_adapter(HF_REPO_ID, subfolder=current_p_subfolder, adapter_name="p_adapter")
+                 p_model.set_adapter("p_adapter")
+        except Exception as e:
+             print(f"Error loading p_theta: {e}")
+
         FastLanguageModel.for_inference(p_model)
         
         new_triples = []
@@ -296,7 +318,7 @@ def main():
         q_texts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale: {t['rationale']}" for t in new_triples]
         
         # Train Function
-        def train_step(texts, base_adapter, output_path, run_name):
+        def train_step(texts, base_adapter_subfolder, output_path, run_name):
             model, tokenizer = FastLanguageModel.from_pretrained(
                 MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
             )
@@ -314,7 +336,14 @@ def main():
                 random_state=3407,
                 use_rslora=False,
             )
-            model.load_adapter(base_adapter) # Resume from previous iter
+            
+            # Load previous adapter
+            print(f"Loading previous adapter from {base_adapter_subfolder}")
+            if os.path.exists(base_adapter_subfolder):
+                 model.load_adapter(base_adapter_subfolder)
+            else:
+                 model.load_adapter(HF_REPO_ID, subfolder=base_adapter_subfolder) # Unsloth/PEFT usually handles overwrite?
+            
             FastLanguageModel.for_training(model)
             
             ds = Dataset.from_dict({"text": texts})
@@ -351,15 +380,26 @@ def main():
             torch.cuda.empty_cache()
             
         # Paths for new iter
+        # Local paths for saving
         next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
         next_q_path = f"./models/{HF_VERSION}/q/iter-{iteration}"
         
-        train_step(p_texts, current_p_path, next_p_path, f"p_iter{iteration}")
-        train_step(q_texts, current_q_path, next_q_path, f"q_iter{iteration}")
+        # HF subfolders for next iter (where they WILL be uploaded)
+        next_p_subfolder = f"{HF_VERSION}/p/iter-{iteration}"
+        next_q_subfolder = f"{HF_VERSION}/q/iter-{iteration}"
+        
+        train_step(p_texts, current_p_subfolder, next_p_path, f"p_iter{iteration}")
+        train_step(q_texts, current_q_subfolder, next_q_path, f"q_iter{iteration}")
         
         # Update paths for next loop
-        current_p_path = next_p_path
-        current_q_path = next_q_path
+        # For the next iteration, we can use the local path since it was just saved locally?
+        # Or stick to the plan of using HF paths if running distributed?
+        # Assuming single machine for Phase 2 loop -> use local path for speed?
+        # But vLLM needs proper structure.
+        
+        # Let's use the local path for next iteration to avoid waiting for upload/download in the loop.
+        current_p_subfolder = next_p_path
+        current_q_subfolder = next_q_path
         
     print("EM Loop Complete!")
 
