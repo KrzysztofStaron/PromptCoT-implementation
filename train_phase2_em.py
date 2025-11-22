@@ -511,10 +511,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
 
     if loaded_adapter:
         print(f"Resumed adapter from {base_adapter_subfolder}")
-        # When loading adapter, ensure training mode is set but don't reconfigure gradient checkpointing
         FastLanguageModel.for_training(model)
-        # Disable gradient checkpointing in TrainingArguments since it's already configured in the model
-        gradient_checkpointing_kwargs = {"gradient_checkpointing": False}
     else:
         print("Initializing NEW LoRA adapter")
         # Add LoRA config
@@ -532,8 +529,6 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
             use_rslora=False,
         )
         FastLanguageModel.for_training(model)
-        # Enable gradient checkpointing in TrainingArguments for new adapters
-        gradient_checkpointing_kwargs = {}
     
     ds = Dataset.from_dict({"text": texts})
     
@@ -549,7 +544,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         report_to="wandb",
         run_name=run_name,
         dataloader_num_workers=8,  # Faster data loading for better GPU utilization
-        **gradient_checkpointing_kwargs,  # Disable if adapter already has it configured
+        gradient_checkpointing=False,  # Disable HF gradient checkpointing (Unsloth handles it internally)
     )
     
     trainer = SFTTrainer(
