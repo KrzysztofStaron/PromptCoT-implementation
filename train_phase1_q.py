@@ -67,20 +67,20 @@ def train_model(mode, output_dir, hf_path, dataset):
         token=HF_TOKEN,
     )
     
-    # Add LoRA config (same as Phase 0)
+    # Add LoRA Adapters (QLoRA with 4-bit base + FULL training of embeddings/head)
     model = FastLanguageModel.get_peft_model(
         model,
-        r=64,
+        r=64, # Higher rank = more capacity (closer to full fine-tuning)
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
-                        "gate_proj", "up_proj", "down_proj",
-                        "embed_tokens", "lm_head"],
-        lora_alpha=32,
+                        "gate_proj", "up_proj", "down_proj"],  # LoRA on transformer layers
+        lora_alpha=64,  # Doubled to match higher rank
         lora_dropout=0,
         bias="none",
         use_gradient_checkpointing="unsloth",
         random_state=3407,
         use_rslora=False,
-        modules_to_save=["embed_tokens", "lm_head"],
+        loftq_config=None,
+        modules_to_save=["embed_tokens", "lm_head"],  # FULLY train embeddings & output (not quantized!)
     )
     
     # Load Phase 0 Adapters from HuggingFace
@@ -102,17 +102,18 @@ def train_model(mode, output_dir, hf_path, dataset):
 
     # Training Args
     training_args = TrainingArguments(
-        per_device_train_batch_size=16,  # Matches Phase 0
-        gradient_accumulation_steps=8,   # Matches Phase 0 (effective batch size = 128)
-        warmup_steps=50,
-        num_train_epochs=3, # Phase 1 requirement
-        learning_rate=1e-4, # Slightly lower LR for refinement
+        per_device_train_batch_size=16, # Grok-4.1 Recipe: batch 16
+        gradient_accumulation_steps=8,  # Grok-4.1 Recipe: grad accum 8 -> effective 128
+        warmup_steps=100,
+        num_train_epochs=1, # Single epoch over 40k samples (same compute as 4 epochs × 10k)
+        learning_rate=2e-4,
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
         logging_steps=10,
         optim="adamw_8bit",
         weight_decay=0.01,
-        lr_scheduler_type="cosine",
+        lr_scheduler_type="linear",
+        seed=3407,
         output_dir=output_dir,
         report_to="wandb",
         run_name=f"phase1_{mode}_{HF_VERSION}",
@@ -125,7 +126,7 @@ def train_model(mode, output_dir, hf_path, dataset):
         dataset_text_field="text",
         max_seq_length=MAX_SEQ_LENGTH,
         dataset_num_proc=2,
-        packing=True,
+        packing=True, # Pack for efficiency
         args=training_args,
     )
     
