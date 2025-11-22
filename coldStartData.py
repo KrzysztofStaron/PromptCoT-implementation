@@ -129,23 +129,26 @@ class TransformersGenerator(BaseGenerator):
         results = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         return results
 
-def get_best_generator(model_name):
-    # Try vLLM first
-    try:
-        return VLLMGenerator(model_name)
-    except (ImportError, RuntimeError) as e:
-        print(f"vLLM skipped: {e}")
+def get_best_generator(model_name, backend="auto"):
+    # Try vLLM first if auto or requested
+    if backend in ["auto", "vllm"]:
+        try:
+            return VLLMGenerator(model_name)
+        except (ImportError, RuntimeError) as e:
+            if backend == "vllm":
+                raise e # Fail if explicitly requested
+            print(f"vLLM skipped: {e}")
 
     # Fallback to Transformers
     return TransformersGenerator(model_name)
 
-def main(max_problems=None, output_file="generated_problems.jsonl", batch_size=1):
+def main(max_problems=None, output_file="generated_problems.jsonl", batch_size=1, backend="auto"):
     # Load dataset - use streaming
     print("Loading dataset: xl-zhao/PromptCoT-2.0-Concepts")
     dataset = load_dataset("xl-zhao/PromptCoT-2.0-Concepts", split="train", streaming=True)
 
     # Initialize generator
-    generator = get_best_generator(MODEL_NAME)
+    generator = get_best_generator(MODEL_NAME, backend)
     
     if isinstance(generator, TransformersGenerator) and batch_size > 32:
         print(f"Transformers backend detected with large batch size ({batch_size}). Reducing to 32 to prevent OOM.")
@@ -177,15 +180,19 @@ def main(max_problems=None, output_file="generated_problems.jsonl", batch_size=1
 
             # Process batch when full or at the end
             if len(batch_data) >= batch_size:
-                _process_batch(generator, batch_data, f)
-                generated_count += len(batch_data)
-                print(f"Generated {generated_count} problems so far...")
+                if _process_batch(generator, batch_data, f):
+                    generated_count += len(batch_data)
+                    print(f"Generated {generated_count} problems so far...")
+                else:
+                    print(f"Batch failed. Skipping {len(batch_data)} problems.")
                 batch_data = []
 
         # Process remaining
         if batch_data and (not max_problems or generated_count < max_problems):
-            _process_batch(generator, batch_data, f)
-            generated_count += len(batch_data)
+            if _process_batch(generator, batch_data, f):
+                generated_count += len(batch_data)
+            else:
+                 print(f"Final batch failed. Skipping {len(batch_data)} problems.")
 
     print(f"Successfully generated {generated_count} problems and saved to {output_file}")
 
@@ -204,8 +211,10 @@ def _process_batch(generator, batch_data, file_handle):
             file_handle.write(json.dumps(output_entry, ensure_ascii=False) + '\n')
         
         file_handle.flush()
+        return True
     except Exception as e:
         print(f"Error processing batch: {e}")
+        return False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate problems from PromptCoT concepts dataset")
@@ -215,6 +224,8 @@ if __name__ == "__main__":
                        help="Output file path")
     parser.add_argument("--batch_size", type=int, default=1,
                        help="Batch size for generation (2048-3072 recommended for vLLM on 4x RTX 5090)")
+    parser.add_argument("--backend", type=str, default="auto", choices=["auto", "vllm", "transformers"],
+                       help="Backend to use: auto, vllm, or transformers")
 
     args = parser.parse_args()
     
@@ -231,4 +242,4 @@ if __name__ == "__main__":
         except ImportError:
             pass
 
-    main(max_problems=args.max_problems, output_file=args.output_file, batch_size=args.batch_size)
+    main(max_problems=args.max_problems, output_file=args.output_file, batch_size=args.batch_size, backend=args.backend)
