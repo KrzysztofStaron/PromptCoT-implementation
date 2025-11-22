@@ -39,7 +39,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BASE_NUM_TRIPLETS = 5000  # Base number of triples (used when k=3)
+BASE_NUM_TRIPLETS = 20  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
@@ -153,6 +153,111 @@ def compute_reward(model, tokenizer, c, x, z):
         log.error(f"Reward comp error: {e}")
         return -100.0  # Same large penalty on error
 
+def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=32):
+    """Compute rewards for a batch of (concepts, problems, rationales) in parallel.
+    
+    Args:
+        model: The model to use for scoring
+        tokenizer: Tokenizer
+        batch_data: List of tuples (c, x, z) where c=concepts, x=problem, z=rationale
+        device: Device to run on
+        batch_size: Batch size for processing
+    
+    Returns:
+        List of rewards (same length as batch_data)
+    """
+    if not batch_data:
+        return []
+    
+    # Separate valid and invalid (bad structure) items
+    valid_items = []
+    valid_indices = []
+    
+    for i, (c, x, z) in enumerate(batch_data):
+        if check_structure_and_tags(z):
+            valid_items.append((c, x, z))
+            valid_indices.append(i)
+    
+    # Initialize rewards with -100.0 for invalid items
+    rewards = [-100.0] * len(batch_data)
+    
+    if not valid_items:
+        return rewards
+    
+    try:
+        # Process in batches
+        for batch_start in range(0, len(valid_items), batch_size):
+            batch_end = min(batch_start + batch_size, len(valid_items))
+            batch_valid = valid_items[batch_start:batch_end]
+            
+            # Prepare batched inputs for loss_x: "Concepts: {c}\nRationale: {z}\nProblem: {x}"
+            texts_x = [f"Concepts: {c}\nRationale: {z}\nProblem: {x}" for c, x, z in batch_valid]
+            inputs_x = tokenizer(texts_x, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
+            inputs_x = {k: v.to(device) for k, v in inputs_x.items()}
+            
+            # Set pad_token_id if not already set
+            pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+            
+            with torch.no_grad():
+                outputs_x = model(**inputs_x, labels=inputs_x["input_ids"])
+                # Get per-sample losses
+                logits_x = outputs_x.logits
+                labels_x = inputs_x["input_ids"]
+                shift_logits_x = logits_x[..., :-1, :].contiguous()
+                shift_labels_x = labels_x[..., 1:].contiguous()
+                
+                # Compute per-sample loss
+                loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=pad_token_id)
+                flat_shift_logits_x = shift_logits_x.view(-1, shift_logits_x.size(-1))
+                flat_shift_labels_x = shift_labels_x.view(-1)
+                flat_losses_x = loss_fct(flat_shift_logits_x, flat_shift_labels_x)
+                
+                # Reshape and compute mean per sequence (ignoring padding)
+                losses_x = flat_losses_x.view(shift_labels_x.shape)
+                mask_x = (shift_labels_x != pad_token_id).float()
+                per_sample_loss_x = (losses_x * mask_x).sum(dim=1) / mask_x.sum(dim=1).clamp(min=1)
+            
+            del inputs_x, outputs_x, logits_x, labels_x
+            
+            # Prepare batched inputs for loss_z: "Concepts: {c}\nRationale: {z}"
+            texts_z = [f"Concepts: {c}\nRationale: {z}" for c, x, z in batch_valid]
+            inputs_z = tokenizer(texts_z, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
+            inputs_z = {k: v.to(device) for k, v in inputs_z.items()}
+            
+            with torch.no_grad():
+                outputs_z = model(**inputs_z, labels=inputs_z["input_ids"])
+                logits_z = outputs_z.logits
+                labels_z = inputs_z["input_ids"]
+                shift_logits_z = logits_z[..., :-1, :].contiguous()
+                shift_labels_z = labels_z[..., 1:].contiguous()
+                
+                # Compute per-sample loss
+                flat_shift_logits_z = shift_logits_z.view(-1, shift_logits_z.size(-1))
+                flat_shift_labels_z = shift_labels_z.view(-1)
+                flat_losses_z = loss_fct(flat_shift_logits_z, flat_shift_labels_z)
+                
+                # Reshape and compute mean per sequence
+                losses_z = flat_losses_z.view(shift_labels_z.shape)
+                mask_z = (shift_labels_z != pad_token_id).float()
+                per_sample_loss_z = (losses_z * mask_z).sum(dim=1) / mask_z.sum(dim=1).clamp(min=1)
+            
+            del inputs_z, outputs_z, logits_z, labels_z
+            
+            # Compute rewards: -(loss_x + loss_z)
+            batch_rewards = -(per_sample_loss_x.cpu() + per_sample_loss_z.cpu()).tolist()
+            
+            # Assign rewards to valid items
+            for idx, reward in zip(valid_indices[batch_start:batch_end], batch_rewards):
+                rewards[idx] = reward
+                
+    except Exception as e:
+        log.error(f"Batched reward comp error: {e}")
+        # On error, all valid items get -100.0 penalty
+        for idx in valid_indices:
+            rewards[idx] = -100.0
+    
+    return rewards
+
 # --- Data Loader ---
 def load_initial_triples(num_triples=None):
     """Load triples from dataset.
@@ -224,22 +329,28 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     
     FastLanguageModel.for_inference(model)
     
-    # Generate k samples for each triple
+    # Batch generation: prepare all prompts and generate k samples for each in parallel
+    prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
+    
+    # Generate k samples for all triples in batches
     candidates = []
-    for t in triples:
-        prompt = f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:"
+    for prompt in prompts:
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        # Generate k samples in one call using num_return_sequences
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=768,
+            temperature=1.0,
+            top_p=0.95,
+            do_sample=True,
+            num_return_sequences=k,  # Generate all k samples at once
+            pad_token_id=tokenizer.eos_token_id,
+        )
+        
+        # Process all k outputs
         z_list = []
-        for _ in range(k):
-            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=768,
-                temperature=1.0,
-                top_p=0.95,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-            generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        for output in outputs:
+            generated_text = tokenizer.decode(output, skip_special_tokens=True)
             rationale = generated_text.split("Rationale:")[-1].strip()
             # Stop at Problem: if it appears
             if "\nProblem:" in rationale:
@@ -291,26 +402,55 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
 
     FastLanguageModel.for_inference(p_model)
     
-    new_triples = []
+    # Flatten all candidates for batched processing
+    # Structure: (triple_idx, candidate_idx, concepts, problem, rationale)
+    flat_candidates = []
+    triple_indices = []  # Track which triple each candidate belongs to
     
     for i, t in enumerate(triples):
         c = t['concepts']
         x = t['problem']
-        z_list = candidates[i] # list of k strings
-        
-        scores = []
+        z_list = candidates[i]
         for z in z_list:
-            score = compute_reward(p_model, tokenizer, c, x, z)
-            scores.append(score)
+            flat_candidates.append((c, x, z))
+            triple_indices.append(i)
+    
+    total_candidates = len(flat_candidates)
+    print(f"  Computing rewards for {total_candidates} candidates in batches...")
+    
+    # Process in batches
+    BATCH_SIZE_REWARD = 64  # Batch size for reward computation
+    all_rewards = []
+    
+    for batch_start in range(0, total_candidates, BATCH_SIZE_REWARD):
+        batch_end = min(batch_start + BATCH_SIZE_REWARD, total_candidates)
+        batch_data = flat_candidates[batch_start:batch_end]
+        
+        # Progress logging
+        if (batch_start // BATCH_SIZE_REWARD + 1) % 10 == 0 or batch_end == total_candidates:
+            print(f"    Processing batch {batch_start // BATCH_SIZE_REWARD + 1}/{(total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD} "
+                  f"({batch_end}/{total_candidates} candidates, {100 * batch_end / total_candidates:.1f}%)")
+        
+        batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, BATCH_SIZE_REWARD)
+        all_rewards.extend(batch_rewards)
+    
+    # Reconstruct scores per triple and select best
+    new_triples = []
+    reward_idx = 0
+    
+    for i, t in enumerate(triples):
+        k = len(candidates[i])
+        scores = all_rewards[reward_idx:reward_idx + k]
+        reward_idx += k
         
         # Select best
         best_idx = scores.index(max(scores))
-        best_z = z_list[best_idx]
+        best_z = candidates[i][best_idx]
         
         new_triples.append({
-            "concepts": c,
+            "concepts": t['concepts'],
             "rationale": best_z,
-            "problem": x
+            "problem": t['problem']
         })
         
     # Cleanup p_model
@@ -351,8 +491,8 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     ds = Dataset.from_dict({"text": texts})
     
     training_args = TrainingArguments(
-        per_device_train_batch_size=64, # Optimized for H200 NVL (143GB VRAM) - increased from 32
-        gradient_accumulation_steps=2,  # Effective batch size = 64 * 2 = 128
+        per_device_train_batch_size=128, # Optimized for H200 NVL (141GB VRAM) - increased for better utilization
+        gradient_accumulation_steps=2,  # Effective batch size = 128 * 2 = 256
         num_train_epochs=1, # Plan requirement
         learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
         fp16=False,  # Disable fp16 - model is in bfloat16
@@ -361,7 +501,7 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
         optim="adamw_8bit",
         report_to="wandb",
         run_name=run_name,
-        dataloader_num_workers=8,  # Faster data loading for better GPU utilization
+        dataloader_num_workers=16,  # Increased for faster data loading on H200
         gradient_checkpointing=False,  # Explicitly disable gradient checkpointing
     )
     
