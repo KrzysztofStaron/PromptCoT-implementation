@@ -483,91 +483,140 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     return new_triples
 
 def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
-    """Run a single training step (SFT) for either p_theta or q_phi."""
+    """Run a single training step (SFT) for either p_theta or q_phi.
+    
+    Simplified, bulletproof implementation:
+    - Strictly disables all gradient checkpointing to prevent AttributeError crashes
+    - Simplified adapter loading logic
+    - Clean linear flow: Load Base -> Load/Create Adapter -> Train
+    """
+    print(f"--- Training Step: {run_name} ---")
+    
+    # 1. Load Base Model
     model, tokenizer = FastLanguageModel.from_pretrained(
         MODEL_NAME, max_seq_length=MAX_SEQ_LENGTH, dtype=DTYPE, load_in_4bit=LOAD_IN_4BIT
     )
     
-    loaded_adapter = False
-    try:
-        # Try loading existing adapter
-        if os.path.exists(base_adapter_subfolder):
-            adapter_path = base_adapter_subfolder
-            model.load_adapter(adapter_path)
-            loaded_adapter = True
-        else:
-            # Download adapter from HF if not available locally
-            print(f"Downloading adapter from {HF_REPO_ID} subfolder {base_adapter_subfolder}...")
-            try:
-                downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{base_adapter_subfolder}/*", token=HF_TOKEN)
-                adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
+    # 2. Load or Create Adapter (Simplified Logic)
+    adapter_loaded = False
+    adapter_path = base_adapter_subfolder
+    
+    # Check if adapter exists locally
+    if os.path.exists(base_adapter_subfolder):
+        print(f"Loading adapter from local path: {base_adapter_subfolder}")
+        try:
+            model.load_adapter(base_adapter_subfolder)
+            adapter_loaded = True
+            print(f"✓ Loaded adapter from {base_adapter_subfolder}")
+        except Exception as e:
+            print(f"Failed to load local adapter: {e}")
+    
+    # If not local, try downloading from HF
+    if not adapter_loaded:
+        print(f"Adapter not found locally, checking HuggingFace: {HF_REPO_ID}/{base_adapter_subfolder}")
+        try:
+            downloaded_path = snapshot_download(
+                repo_id=HF_REPO_ID, 
+                allow_patterns=f"{base_adapter_subfolder}/*", 
+                token=HF_TOKEN
+            )
+            adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
+            if os.path.exists(adapter_path):
+                print(f"Downloaded adapter to: {adapter_path}")
                 model.load_adapter(adapter_path)
-                loaded_adapter = True
-            except Exception as e:
-                print(f"Adapter download/load failed: {e}")
-                pass
-    except Exception as e:
-        print(f"Adapter load failed: {e}")
-
-    if loaded_adapter:
-        print(f"Resumed adapter from {base_adapter_subfolder}")
-        FastLanguageModel.for_training(model)
-    else:
-        print("Initializing NEW LoRA adapter")
-        # Add LoRA config
+                adapter_loaded = True
+                print(f"✓ Loaded adapter from HuggingFace")
+        except Exception as e:
+            print(f"Could not download adapter from HF: {e}")
+            print("Will initialize new adapter from scratch")
+    
+    # 3. Create New Adapter if None Loaded
+    if not adapter_loaded:
+        print("Initializing NEW LoRA adapter (from scratch)")
         model = FastLanguageModel.get_peft_model(
             model,
             r=64,
             target_modules=["q_proj", "k_proj", "v_proj", "o_proj", 
-                            "gate_proj", "up_proj", "down_proj",
-                            ],
+                            "gate_proj", "up_proj", "down_proj"],
             lora_alpha=32,
             lora_dropout=0,
             bias="none",
-            use_gradient_checkpointing=False,  # Disable Unsloth checkpointing to fix AttributeError
+            use_gradient_checkpointing=False,  # EXPLICITLY DISABLED - prevents AttributeError
             random_state=3407,
             use_rslora=False,
         )
-        FastLanguageModel.for_training(model)
     
+    # 4. Prepare Model for Training
+    FastLanguageModel.for_training(model)
+    
+    # 5. Prepare Dataset
     ds = Dataset.from_dict({"text": texts})
     
+    # 6. Training Arguments - EXPLICITLY DISABLE gradient checkpointing
     args = TrainingArguments(
-        per_device_train_batch_size=64, # Optimized for H200 NVL (143GB VRAM) - increased from 32
-        gradient_accumulation_steps=2,  # Effective batch size = 64 * 2 = 128
-        num_train_epochs=1, # Plan requirement
-        learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
+        per_device_train_batch_size=64,
+        gradient_accumulation_steps=2,
+        num_train_epochs=1,
+        learning_rate=2e-6,
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
         output_dir=output_path,
         optim="adamw_8bit",
         report_to="wandb",
         run_name=run_name,
-        dataloader_num_workers=8,  # Faster data loading for better GPU utilization
-        gradient_checkpointing=False,  # Disable HF gradient checkpointing (Unsloth handles it internally)
+        dataloader_num_workers=8,
+        gradient_checkpointing=False,  # EXPLICITLY DISABLED - prevents AttributeError
     )
     
+    # 7. Train
     trainer = SFTTrainer(
-        model=model, tokenizer=tokenizer, train_dataset=ds, dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LENGTH, packing=True, args=args
+        model=model, 
+        tokenizer=tokenizer, 
+        train_dataset=ds, 
+        dataset_text_field="text",
+        max_seq_length=MAX_SEQ_LENGTH, 
+        packing=True, 
+        args=args
     )
+    
     trainer.train()
+    
+    # 8. Save
     model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
+    print(f"✓ Saved model to {output_path}")
     
-    # Upload (skip if testm mode)
-    if HF_TOKEN and not args.testm:
-        iter_name = output_path.split('/')[-1] # iter-N
-        hf_subpath = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/{iter_name}"
-        api = HfApi(token=HF_TOKEN)
-        api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_subpath, repo_type="model")
-        
-        # Also upload to latest
-        hf_latest_path = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/latest"
-        api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_latest_path, repo_type="model")
-    elif args.testm:
+    # 9. Upload (skip if testm mode)
+    # Note: 'args' here is TrainingArguments, access module-level argparse 'args' via import
+    import train_phase2_em as this_module
+    testm_mode = getattr(this_module, 'args', type('obj', (object,), {'testm': False})()).testm
+    if HF_TOKEN and not testm_mode:
+        try:
+            iter_name = output_path.split('/')[-1]
+            hf_subpath = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/{iter_name}"
+            api = HfApi(token=HF_TOKEN)
+            api.upload_folder(
+                folder_path=output_path, 
+                repo_id=HF_REPO_ID, 
+                path_in_repo=hf_subpath, 
+                repo_type="model"
+            )
+            
+            # Also upload to latest
+            hf_latest_path = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/latest"
+            api.upload_folder(
+                folder_path=output_path, 
+                repo_id=HF_REPO_ID, 
+                path_in_repo=hf_latest_path, 
+                repo_type="model"
+            )
+            print(f"✓ Uploaded to HuggingFace: {hf_subpath} and {hf_latest_path}")
+        except Exception as e:
+            print(f"Upload failed: {e}")
+    elif testm_mode:
         print(f"  Skipping HuggingFace upload (testm mode): {output_path}")
     
+    # 10. Cleanup
     del model, trainer
     torch.cuda.empty_cache()
 
