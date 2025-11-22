@@ -40,9 +40,9 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BATCH_SIZE = 8 # Adjusted for H100 & 7B model size
+BATCH_SIZE = 64 # Adjusted for H100 & 7B model size (Increased for higher utilization)
 GRAD_ACCUM = 4
-NUM_TRIPLETS = 1000
+NUM_TRIPLETS = 3000
 
 # Paths
 # We load models from HuggingFace directly
@@ -156,7 +156,7 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
     # Generate with vLLM (restart each iteration to pick up new LoRA adapters)
-    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128) 
+    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128, gpu_memory_utilization=0.9) 
     
     # Download adapter from HF if not available locally
     if not os.path.exists(current_q_subfolder):
@@ -293,9 +293,9 @@ def run_training_step(texts, base_adapter_subfolder, output_path, run_name):
     ds = Dataset.from_dict({"text": texts})
     
     args = TrainingArguments(
-        per_device_train_batch_size=4,
-        gradient_accumulation_steps=8,
-        num_train_epochs=3, # Plan requirement
+        per_device_train_batch_size=32, # Increased from 4 for H100
+        gradient_accumulation_steps=2,  # Effective batch size = 16 * 4 * num_gpus (approx 64)
+        num_train_epochs=1, # Plan requirement
         learning_rate=2e-6, # Paper uses 2e-6 for both E-step and M-step
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
@@ -350,7 +350,7 @@ def generate_m_step_data(triples, updated_q_subfolder):
     # Prepare prompts
     vllm_prompts = [f"Concepts: {t['concepts']}\nProblem: {t['problem']}\nRationale:" for t in triples]
     
-    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128)
+    llm = LLM(model=MODEL_NAME, enable_lora=True, max_lora_rank=128, gpu_memory_utilization=0.9)
     
     # Check if updated adapter exists locally (it should, we just trained it)
     # If not (e.g. remote only), download it
