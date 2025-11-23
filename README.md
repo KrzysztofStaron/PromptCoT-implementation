@@ -20,7 +20,7 @@ Based on the [PromptCoT paper](https://arxiv.org/pdf/2509.19894) - a method for 
 
 **Purpose**: Create a foundational dataset for generating Olympiad-level math questions
 
-**Generation**: We collected 253 high-quality seed triples from AIME 2024/2025 problems, using GPT-5 to extract concepts and generate rationales. This provides the initial training data to kickstart the EM loop.
+**Generation**: Uses the [PromptCoT-Problem-Generation-Dataset](https://huggingface.co/datasets/xl-zhao/PromptCoT-Problem-Generation-Dataset) which contains high-quality seed triples from AIME problems with extracted concepts and generated rationales. This provides the initial training data to kickstart the EM loop.
 
 **Structure**:
 
@@ -43,7 +43,9 @@ Note: 100–1,000 high-quality triples are sufficient to kickstart the EM loop. 
 - **Input**: (concepts, problem)
 - **Output**: rationale
 
-**Model**: LoRA fine-tuned Qwen2.5-7B-Instruct with r=64, targeting attention projection matrices.
+**Model**: LoRA fine-tuned `unsloth/DeepSeek-R1-Distill-Qwen-7B` with r=64, alpha=64, targeting attention projection matrices (q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj).
+
+**Format**: `[CONCEPTS]\n{concepts}\n[/CONCEPTS]\n\n[PROBLEM]\n{problem}\n[/PROBLEM]\n\n[RATIONALE]\n{rationale}\n[/RATIONALE]`
 
 **Weights**: [PromptCoT-Rationale Model](https://huggingface.co/PanzerBread/promptCoT-rationale)
 
@@ -56,23 +58,33 @@ Note: 100–1,000 high-quality triples are sufficient to kickstart the EM loop. 
 - **Input**: (concepts, rationale)
 - **Output**: problem
 
-**Model**: LoRA fine-tuned Qwen2.5-7B-Instruct with r=64, targeting attention projection matrices.
+**Model**: LoRA fine-tuned `unsloth/DeepSeek-R1-Distill-Qwen-7B` with r=64, alpha=64, targeting attention projection matrices (q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj).
+
+**Format**: `[CONCEPTS]\n{concepts}\n[/CONCEPTS]\n\n[RATIONALE]\n{rationale}\n[/RATIONALE]\n\n[PROBLEM]\n{problem}\n[/PROBLEM]`
 
 **Weights**: [PromptCoT-Prompt Model](https://huggingface.co/PanzerBread/promptCoT-prompt)
 
 ### 4. EM Loop with Reward-Based Selection
 
-**E-step**: Generate 8 rationales, calculate rewards, select the best one
+**E-step**:
 
-**M-step**: Train pθ(x|z,c) on new (c, z_best, x) triples
+- Generate k rationale candidates per problem using qφ (via vLLM for fast inference)
+- Calculate rewards using pθ, select best rationale
+
+**M-step**:
+
+- Generate deterministic rationales using updated qφ
+- Train pθ(x|z,c) on new (c, z_det, x) triples
 
 **Reward Function**:
 
 ```
-log_p_z = -loss_rationale_model(c, z)
-log_p_x = -loss_prompt_model(c + z, x)
-reward = log_p_z + log_p_x
+loss_x = NLL(pθ(x | z, c))  # Problem given concepts and rationale
+loss_z = NLL(pθ(z | c))     # Rationale given concepts
+reward = -(loss_x + loss_z)  # Higher reward = better quality
 ```
+
+**Implementation**: Uses vLLM for fast batched inference during E-step generation, Unsloth for efficient training and reward computation.
 
 ### 5. Post-Training: Self-Play or SFT
 
@@ -108,33 +120,89 @@ reward = log_p_z + log_p_x
 
 - Self-play / SFT implementation
 
-## Training your own prompt synthesis model:
+## Training Pipeline
 
-The cold-start script fine-tunes both models on the seed dataset:
+The training process is divided into three phases:
 
-```bash
-python cold_start.py
-```
+### Phase 0: Cold-Start Training
 
-This will:
+Train both models separately on the seed dataset to establish initial capabilities.
 
-1. Load Qwen2.5-7B base model
-2. Train rationale model on (concepts, problem) → rationale pairs
-3. Train prompt model on (concepts, rationale) → problem pairs
-4. Upload models to HuggingFace Hub (if `HF_TOKEN` is set)
+#### Train Prompt Generator (pθ)
 
 ```bash
-python em.py
+python train_phase0_p.py
 ```
 
-This will:
-Run the EM (Expectation-Maximization) loop to iteratively improve the synthetic dataset generation:
+This script:
 
-- **E-step**: Generate multiple rationales per problem, compute rewards, select best rationale
-- **M-step**: Fine-tune pθ and qφ models on selected triples
-- Uploads checkpoints to HuggingFace after each iteration
-- Supports resume from latest checkpoint
+- Loads `unsloth/DeepSeek-R1-Distill-Qwen-7B` base model (4-bit QLoRA)
+- Trains pθ model on format: `[CONCEPTS]\n[RATIONALE]\n[PROBLEM]`
+- Fine-tunes with LoRA (r=64, alpha=64) on attention projection matrices
+- Saves to `./models/{HF_VERSION}/p/cold-start`
+- Uploads to HuggingFace Hub (if `HF_TOKEN` is set)
+
+#### Train Rationale Model (qφ)
+
+```bash
+python train_phase0_q.py
+```
+
+This script:
+
+- Loads `unsloth/DeepSeek-R1-Distill-Qwen-7B` base model (4-bit QLoRA)
+- Trains qφ model on format: `[CONCEPTS]\n[PROBLEM]\n[RATIONALE]`
+- Fine-tunes with LoRA (r=64, alpha=64) on attention projection matrices
+- Saves to `./models/{HF_VERSION}/q/cold-start`
+- Uploads to HuggingFace Hub (if `HF_TOKEN` is set)
+
+### Phase 2: EM Loop Training
+
+Run the Expectation-Maximization loop to iteratively improve synthetic dataset generation:
+
+```bash
+python train_phase2_em.py [--k K] [--no-upload]
+```
+
+**Arguments:**
+
+- `--k`: Number of rationale candidates to generate per prompt (default: 5)
+- `--no-upload`: Disable uploading to HuggingFace
+
+**Process:**
+
+1. **E-step**:
+
+   - Generate k rationale candidates per problem using qφ (via vLLM for fast inference)
+   - Compute rewards using pθ: `reward = -(loss_x + loss_z)` where:
+     - `loss_x` = NLL of problem given concepts and rationale
+     - `loss_z` = NLL of rationale given concepts
+   - Select best rationale based on reward
+   - Update qφ on selected triples
+
+2. **M-step**:
+
+   - Generate deterministic rationales using updated qφ
+   - Update pθ on new (concepts, rationale, problem) triples
+
+3. **Iteration Management**:
+   - Automatically resumes from latest checkpoint
+   - Uploads checkpoints to HuggingFace after each iteration
+   - Cleans up old iterations (keeps last 3)
+
+**Configuration:**
+
+- Set `HF_VERSION` in `hf_config.py` to version your models
+- Number of triples scales inversely with k to keep computation constant
+- Default: 2 EM iterations, configurable via `EM_ITERS` in script
+
+## Configuration
+
+**HuggingFace Setup:**
+
+- Edit `hf_config.py` to set `HF_VERSION` and `HF_USERNAME`
+- Set `HF_TOKEN` in `.env` file for automatic model uploads
 
 **Requirements**: See `requirements.txt`
 
-**Environment**: Set `HF_TOKEN` in `.env` file for automatic model uploads.
+**Hardware**: Recommended H200 GPU (141GB VRAM) or similar high-memory GPU for Phase 2
