@@ -288,6 +288,24 @@
     </div>
 
     <div class="section">
+      <h2>Personal Perspective</h2>
+      <p>
+        I've worked on this project for a month now, and learned a lot, it's my first attempt at implementing something
+        stright from research ppaer, and it's a good learning experience. The actual effect isn't something I'm proud
+        of, but it is what it is, and I'm glad I tried.
+      </p>
+      <p>
+        It turned out I really suck at moving huge amounts of data around, I can't stress enough how many times my code
+        just crashed, I'm used to working with JS, so using python was a pain, I'm not used to the syntax, and the way
+        to do things, but I'm getting there.
+      </p>
+      <p>
+        Building ML project is really stressful, I'm not making that much money, and each mistake costs me weeks of
+        part-time work. But I won't give up, I'll earn enough to learn.
+      </p>
+    </div>
+
+    <div class="section">
       <h2>Conclusion</h2>
       <p>
         Authors of PromptCoT 2.0 Never accualy managed to train relaible problem generation model, but it's good enough
@@ -383,10 +401,10 @@ Let $z$ be a complex number such that $|z|=\frac{1}{2}$. Let $w$ be a randomly c
           <p>
             Empirical analysis reveals that the model's output deviates from the concept-rationale-prompt paradigm
             described in the paper. The generated rationale adopts a meta-pedagogical structure (describing how problems
-            are designed) rather than constructing a step-by-step reasoning chain that synthesizes foundational
-            concepts into a coherent problem statement. Analysis of the concept integration shows that from the
-            provided foundational concepts (fractional arithmetic, nested operations, quantitative estimation, complex
-            number equality), the model incorporates approximately 1.5 concepts with superficial treatment, failing to
+            are designed) rather than constructing a step-by-step reasoning chain that synthesizes foundational concepts
+            into a coherent problem statement. Analysis of the concept integration shows that from the provided
+            foundational concepts (fractional arithmetic, nested operations, quantitative estimation, complex number
+            equality), the model incorporates approximately 1.5 concepts with superficial treatment, failing to
             demonstrate the interweaving synthesis mechanism central to PromptCoT's methodology.
           </p>
 
@@ -514,8 +532,8 @@ This problem requires students to use quantitative reasoning, complex numbers, f
             and b are distinct complex numbers?" lacks a well-defined probability space, as the variables a and b are
             deterministically constrained by the given conditions (|a+b| = |a-b| = 1) without an associated random
             distribution. Additionally, the rationale references concepts (sums, products, estimation techniques) that
-            were not included in the provided foundational concept set, indicating a failure in concept anchoring
-            during the generation process.
+            were not included in the provided foundational concept set, indicating a failure in concept anchoring during
+            the generation process.
           </p>
 
           <h5>Implications</h5>
@@ -533,8 +551,8 @@ This problem requires students to use quantitative reasoning, complex numbers, f
           <p>
             Empirical observations across multiple experimental runs indicate that the model exhibits mode collapse into
             task-specific attractor basins: competitive programming problem format (Codeforces-style), mathematical
-            problem-solving mode, and pedagogical explanation mode. This suggests that PromptCoT-specific behavior was not
-            sufficiently dominant in the training distribution, leading to the model defaulting to patterns from
+            problem-solving mode, and pedagogical explanation mode. This suggests that PromptCoT-specific behavior was
+            not sufficiently dominant in the training distribution, leading to the model defaulting to patterns from
             auxiliary training data.
           </p>
 
@@ -598,8 +616,8 @@ This problem requires students to use quantitative reasoning, complex numbers, f
           <h5>Key Observations</h5>
           <p>
             The model output demonstrates a complete failure to adhere to the PromptCoT task specification. Instead of
-            generating a rationale-prompt pair that synthesizes the provided foundational concepts, the model produces
-            a system of modular congruences with no relationship to the input concepts (quantitative reasoning, complex
+            generating a rationale-prompt pair that synthesizes the provided foundational concepts, the model produces a
+            system of modular congruences with no relationship to the input concepts (quantitative reasoning, complex
             numbers, nested functions). The output format deviates entirely from the expected structure, omitting the
             rationale section and concept integration mechanism entirely.
           </p>
@@ -716,8 +734,8 @@ pass this pretest.</code></pre>
           <h5>Implications</h5>
           <p>
             This failure mode indicates a fundamental issue with data balance in the training distribution or
-            insufficient prompting pressure to maintain the PromptCoT task structure. The observed behavior suggests that
-            competitive programming problem formats were overrepresented in the training data relative to PromptCoT
+            insufficient prompting pressure to maintain the PromptCoT task structure. The observed behavior suggests
+            that competitive programming problem formats were overrepresented in the training data relative to PromptCoT
             exemplars, or that the model's learned mapping from concepts to problems was not sufficiently robust to
             prevent mode collapse into alternative task formats.
           </p>
