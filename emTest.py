@@ -67,20 +67,17 @@ def parse_promptcot_dataset(examples):
 
 def load_test_dataset(num_examples=10):
     """Load and parse test dataset"""
-    print("Loading test dataset...")
-    ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split="train")
+    print(f"Loading {num_examples} test examples...")
+    ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split=f"train[:{num_examples}]")
 
-    # Parse all examples
+    # Parse examples
     parsed_examples = []
     for example in ds:
         parsed = parse_promptcot_dataset({"prompt": [example["prompt"]], "completion": [example["completion"]]})
         parsed_examples.extend(parsed)
 
-    # Take first num_examples for testing
-    test_examples = parsed_examples[:num_examples]
-    print(f"Loaded {len(test_examples)} test examples")
-
-    return test_examples
+    print(f"Loaded {len(parsed_examples)} test examples")
+    return parsed_examples
 
 def load_model_with_adapter(subfolder, adapter_name="test_adapter"):
     """Load base model and adapter from HuggingFace - reused from train_phase2_em.py"""
