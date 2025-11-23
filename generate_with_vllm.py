@@ -74,7 +74,7 @@ def main():
     sampling_params = SamplingParams(
         temperature=0.42,           # slightly higher = more creative
         top_p=0.94,
-        max_tokens=2200,            # enough for full problem + 3 samples
+        max_tokens=8192,            # full context length, no truncation
         repetition_penalty=1.16,    # gentle – we don't want to fight the format
         frequency_penalty=0.08,
         presence_penalty=0.10,

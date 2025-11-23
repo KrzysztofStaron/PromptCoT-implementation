@@ -144,7 +144,7 @@ def compute_structure_accuracy(model, tokenizer, seed_data, model_type="prompt",
             
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=1024,
+                max_new_tokens=8192,
                 do_sample=True,
                 temperature=0.7,
                 top_p=0.9,

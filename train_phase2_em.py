@@ -58,7 +58,7 @@ args = parser.parse_args()
 
 # Paths
 # We load models from HuggingFace directly
-HF_COLD_START_P_SUBFOLDER = f"{HF_VERSION}/joint"
+HF_COLD_START_P_SUBFOLDER = f"{HF_VERSION}/p/cold-start"
 HF_COLD_START_Q_SUBFOLDER = f"{HF_VERSION}/q/cold-start"
 
 # Local cache/output paths for iterations
@@ -410,7 +410,7 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     
     # Paper uses temperature 1.0 for E-step sampling
     print(f"  Generating {k} samples per prompt for {len(vllm_prompts)} prompts...")
-    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=1024, stop=["\nProblem:", "Problem:"])
+    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=8192, stop=["\nProblem:", "Problem:"])
     
     outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
@@ -446,31 +446,46 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
         load_in_4bit=LOAD_IN_4BIT,
         token=HF_TOKEN
     )
-    print("  p_theta model loaded")
-    
+    print("  Base model loaded")
+
+    # Apply LoRA adapter structure (matches training configuration)
+    print("  Applying LoRA adapter structure...")
+    p_model = FastLanguageModel.get_peft_model(
+        p_model,
+        r=64,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_alpha=64,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
+        use_rslora=False,
+    )
+
     # Load adapter
     print(f"  Loading p_theta adapter from {HF_REPO_ID} subfolder {current_p_subfolder}")
     try:
-         # Check if local or HF
-         if os.path.exists(current_p_subfolder):
-             p_adapter_path = current_p_subfolder
-         else:
-             # Download adapter from HF if not available locally
-             print(f"Downloading adapter from {HF_REPO_ID} subfolder {current_p_subfolder}...")
-             try:
-                 downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_p_subfolder}/*", token=HF_TOKEN)
-                 p_adapter_path = os.path.join(downloaded_path, current_p_subfolder)
-             except Exception as e:
-                 print(f"Warning: Could not download {current_p_subfolder}: {e}")
-                 raise
-         
-         p_model.load_adapter(p_adapter_path, adapter_name="p_adapter")
-         p_model.set_adapter("p_adapter")
+        # Check if local or HF
+        if os.path.exists(current_p_subfolder):
+            p_adapter_path = current_p_subfolder
+            print(f"  Adapter found locally: {p_adapter_path}")
+        else:
+            # Download adapter from HF if not available locally
+            print(f"  Downloading adapter from {HF_REPO_ID} subfolder {current_p_subfolder}...")
+            downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_p_subfolder}/*", token=HF_TOKEN)
+            p_adapter_path = os.path.join(downloaded_path, current_p_subfolder)
+            print("  Adapter downloaded successfully")
+
+        p_model.load_adapter(p_adapter_path, adapter_name="p_adapter")
+        p_model.set_adapter("p_adapter")
+        print("  Adapter loaded successfully")
     except Exception as e:
-         print(f"Error loading p_theta: {e}")
-         raise
+        print(f"  Error loading p_theta: {e}")
+        raise
 
     FastLanguageModel.for_inference(p_model)
+    print("  p_theta model ready for inference")
     
     # Flatten all candidates for batched processing
     # Structure: (triple_idx, candidate_idx, concepts, problem, rationale)
@@ -698,7 +713,7 @@ def generate_m_step_data(triples, updated_q_subfolder):
     
     # Generate deterministic rationales (temperature=0.0 for deterministic)
     print(f"  Generating deterministic rationales for {len(vllm_prompts)} prompts...")
-    params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=1024, stop=["\nProblem:", "Problem:"])
+    params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=8192, stop=["\nProblem:", "Problem:"])
     
     outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     

@@ -118,7 +118,7 @@ class TransformersGenerator(BaseGenerator):
         inputs = self.tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(self.model.device)
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=4096,
+            max_new_tokens=8192,
             temperature=0.8,
             do_sample=True,
             top_p=0.95,

@@ -52,11 +52,11 @@ GRADIENT_ACCUMULATION_STEPS = 10  # Effective batch size = per_device_train_batc
 
 # === GENERATION CONFIG ===
 # Generation parameters for rationale and problem generation
-RATIONALE_MAX_NEW_TOKENS = 512  # Max tokens for rationale generation (E-step)
+RATIONALE_MAX_NEW_TOKENS = 8192  # Max tokens for rationale generation (E-step)
 PROBLEM_MAX_NEW_TOKENS = 1024   # Max tokens for problem generation
 GENERATION_TEMPERATURE = 0.7    # Temperature for sampling
 GENERATION_TOP_P = 0.9         # Top-p for nucleus sampling
-STRUCTURE_CHECK_MAX_TOKENS = 512  # Max tokens for structure accuracy check
+STRUCTURE_CHECK_MAX_TOKENS = 8192  # Max tokens for structure accuracy check
 MAX_SEQUENCE_LENGTH = 1024      # Max sequence length for tokenization/truncation
 
 # === SAMPLING SCHEDULE ===
