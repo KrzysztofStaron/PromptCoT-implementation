@@ -141,7 +141,6 @@ def test_single_model(iteration, subfolder, output_file, test_examples):
             temperature=0.7,
             top_p=0.9,
             max_tokens=8192,
-            stop=["\nProblem:", "Problem:"]
         )
 
         outputs = llm.generate(prompts, params, lora_request=lora_request)
