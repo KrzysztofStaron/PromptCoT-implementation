@@ -1,0 +1,8 @@
+﻿"id","service","is_credit","type","timestamp","paid_timestamp","payment_expected","amount","network","last4","failed","transfer_group","refunded","extra","source"
+"2273790","stripe_payments","true","payment","1763841219.8152142","1763841240.1748972","1764186819.8152142","-40","visa","4463","","pi_3SWMsIHRxJkb56aO1IiFeSQ5","","[object Object]","Stripe"
+"2271555","stripe_payments","true","payment","1763771438.688277","1763771459.2363234","1764117038.688277","-40","visa","4463","","pi_3SW4inHRxJkb56aO0FW7exuZ","","[object Object]","Stripe"
+"2254978","stripe_payments","true","payment","1763246229.576018","1763246266.2447035","1763591829.576018","-20","visa","4463","","pi_3STs5gHRxJkb56aO0lDBSNyI","","[object Object]","Stripe"
+"2253774","stripe_payments","true","payment","1763209385.624771","1763209424.19005","1763554985.624771","-10","visa","4463","","pi_3STiVQHRxJkb56aO12ly826k","","[object Object]","Stripe"
+"2251256","stripe_payments","true","payment","1763144338.949394","1763144357.6975472","1763489938.949394","-10","visa","4463","","pi_3STRaIHRxJkb56aO0T5t93sr","","[object Object]","Stripe"
+"2211854","stripe_payments","true","payment","1762118775.1144252","1762118796.842707","1762464375.1144252","-10","visa","4463","","pi_3SP8mwHRxJkb56aO1DeRqH6a","","[object Object]","Stripe"
+"2209680","stripe_payments","true","payment","1762074918.165337","1762075127.2743793","1762420518.165337","-5","visa","4463","","pi_3SOxNZHRxJkb56aO131ZyRhA","","[object Object]","Stripe"

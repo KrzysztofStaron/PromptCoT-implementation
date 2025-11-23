@@ -46,7 +46,7 @@ def parse_promptcot_dataset(examples):
     return {"text": texts}
 
 def main():
-    print(f"Starting Phase 0: Joint Training on {MODEL_NAME}")
+    print(f"Starting Phase 0: Cold-start on {MODEL_NAME} pθ")
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_NAME,
@@ -75,7 +75,7 @@ def main():
         num_train_epochs=1,
         output_dir=OUTPUT_DIR,
         report_to="wandb",
-        run_name=f"phase0_joint_{HF_VERSION}",
+        run_name=f"phase0_coldstart_p_{HF_VERSION}",
         logging_steps=5,
         logging_first_step=True,
     )
