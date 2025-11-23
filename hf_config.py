@@ -3,8 +3,8 @@
 
 # HuggingFace Hub configuration
 HF_USERNAME = "PanzerBread/PromptCoT"
-HF_VERSION = "coding-0.2"  # Set this constant to version your models
-HF_TAGS = ["math", "coding"]  # Tags to add to uploaded models
+HF_VERSION = "math-0.3"  # Set this constant to version your models
+HF_TAGS = ["math"]  # Tags to add to uploaded models
 
 # Computed HuggingFace repo paths (base paths)
 HF_REPO_ID = HF_USERNAME
