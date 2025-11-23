@@ -183,7 +183,8 @@ def main():
     test_examples = load_test_dataset(NUM_TEST_EXAMPLES)
 
     # Test all models in parallel
-    iterations_to_test = [-1, 0, 1, 2, 3]
+    iterations_to_test = list(MODEL_SUBFOLDERS.keys())
+    print("iterations_to_test: ", iterations_to_test)
     threads = []
 
     for iteration in iterations_to_test:
