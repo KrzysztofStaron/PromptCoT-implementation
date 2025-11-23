@@ -621,12 +621,13 @@ def run_training_step(texts, base_adapter_subfolder, output_path):
     # Upload
     if HF_TOKEN and not args.no_upload:
         iter_name = output_path.split('/')[-1] # iter-N
-        hf_subpath = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/{iter_name}"
+        model_type = 'p' if '/p/' in output_path else 'q'
+        hf_subpath = f"{HF_VERSION}/{model_type}/{iter_name}"
         api = HfApi(token=HF_TOKEN)
         api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_subpath, repo_type="model")
-        
+
         # Also upload to latest
-        hf_latest_path = f"{HF_VERSION}/{'p' if 'p_' in run_name else 'q'}/latest"
+        hf_latest_path = f"{HF_VERSION}/{model_type}/latest"
         api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_latest_path, repo_type="model")
     elif args.no_upload:
         print(f"  Skipping HuggingFace upload (--no-upload flag): {output_path}")
