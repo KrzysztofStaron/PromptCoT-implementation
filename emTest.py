@@ -141,7 +141,7 @@ def load_model_with_adapter(subfolder, adapter_name="test_adapter"):
 
     return model, tokenizer
 
-def generate_with_model_batched(model, tokenizer, prompts, max_new_tokens=1024, temperature=0.7, top_p=0.9, batch_size=8):
+def generate_with_model_batched(model, tokenizer, prompts, max_new_tokens=8192, temperature=0.7, top_p=0.9, batch_size=8):
     """Generate text using the model in batches - optimized for H200 GPU"""
     all_generated_texts = []
 
@@ -192,8 +192,8 @@ def test_joint_model(model, tokenizer, test_examples):
     results = []
     for example, generated_text in zip(test_examples, generated_texts):
         results.append({
-            "input_concepts": example['concepts'],
-            "generated_output": generated_text,
+            "input": example['concepts'],
+            "output": generated_text,
             "ground_truth_problem": example['problem'],
             "ground_truth_rationale": example['rationale']
         })
@@ -215,10 +215,10 @@ def test_p_theta_model(model, tokenizer, test_examples):
     results = []
     for example, generated_text in zip(test_examples, generated_texts):
         results.append({
-            "input_concepts": example['concepts'],
-            "input_rationale": example['rationale'],
-            "generated_problem": generated_text,
-            "ground_truth_problem": example['problem']
+            "input": f"{example['concepts']}\n{example['rationale']}",
+            "output": generated_text,
+            "ground_truth_problem": example['problem'],
+            "ground_truth_rationale": example['rationale']
         })
 
     return results
