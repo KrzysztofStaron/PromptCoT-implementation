@@ -118,7 +118,7 @@ def load_model_with_adapter(subfolder, adapter_name="test_adapter"):
             print(f"  Downloading adapter from {HF_REPO_ID} subfolder {subfolder}...")
             downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{subfolder}/*", token=HF_TOKEN)
             adapter_path = os.path.join(downloaded_path, subfolder)
-            print("  Adapter downloaded successfully"
+            print("  Adapter downloaded successfully")
 
         model.load_adapter(adapter_path, adapter_name=adapter_name)
         model.set_adapter(adapter_name)
