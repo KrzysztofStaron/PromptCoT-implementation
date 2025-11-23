@@ -132,7 +132,7 @@ def test_single_model(iteration, subfolder, output_file, test_examples):
             print("  LoRA adapter loaded")
 
         # Prepare prompts - all models use the same format
-        prompts = [f"Concepts: {example['concepts']}\nRationale:" for example in test_examples]
+        prompts = [f"<Concepts>{example['concepts']}</Concepts>\n<Rationale>" for example in test_examples]
 
         print(f"  Generating for {len(prompts)} prompts...")
 
@@ -151,7 +151,7 @@ def test_single_model(iteration, subfolder, output_file, test_examples):
             generated_text = output.outputs[0].text.strip()
 
             results.append({
-                "input": f"Concepts: {example['concepts']}\nRationale:",
+                "input": f"<Concepts>{example['concepts']}</Concepts>\n<Rationale>",
                 "output": generated_text,
                 "ground_truth_problem": example['problem'],
                 "ground_truth_rationale": example['rationale']
