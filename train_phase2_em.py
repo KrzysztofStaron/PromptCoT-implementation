@@ -796,22 +796,24 @@ def find_latest_iteration():
         # Find fully completed iterations (have both p and q models)
         fully_completed = p_set & q_set  # Intersection
 
-        if fully_completed:
-            # Start from the next iteration after the last fully completed one
+        # Check for partial completion (iterations with q models but no p models)
+        partial_completed = q_set - p_set  # q models that don't have corresponding p models
+
+        # Prioritize partial recovery over starting fresh from fully completed iterations
+        if partial_completed:
+            # Recover from the most recent partial iteration
+            latest_partial_iter = max(partial_completed)
+            recovery_state = 'partial'
+            start_iter = latest_partial_iter
+        elif fully_completed:
+            # No partial iterations, start from next after last fully completed
             latest_full_iter = max(fully_completed)
             recovery_state = 'full'
             start_iter = latest_full_iter + 1
         else:
-            # No fully completed iterations, check for partial completion (q models only)
-            if q_iterations:
-                # Find the highest iteration with a q model (partially completed)
-                latest_partial_iter = max(q_iterations)
-                recovery_state = 'partial'
-                start_iter = latest_partial_iter
-            else:
-                # No models at all, start from scratch
-                recovery_state = 'none'
-                start_iter = 1
+            # No models at all, start from scratch
+            recovery_state = 'none'
+            start_iter = 1
 
         return start_iter, recovery_state
 
