@@ -108,8 +108,7 @@ def test_single_model(iteration, subfolder, output_file, test_examples):
             max_num_batched_tokens=24576,
             max_num_seqs=256,
             enable_chunked_prefill=True,
-            block_size=16,
-            token=HF_TOKEN
+            block_size=16
         )
         print("  vLLM engine initialized")
 
