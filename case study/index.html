@@ -63,11 +63,17 @@
         border-radius: 8px;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
       }
+      .cost-table-wrapper {
+        width: 100%;
+        overflow-x: auto;
+        margin-top: 20px;
+        -webkit-overflow-scrolling: touch;
+      }
       .cost-table {
         width: 100%;
         border-collapse: collapse;
-        margin-top: 20px;
         font-size: 14px;
+        min-width: 600px;
       }
       .cost-table thead {
         background: #f8f9fa;
@@ -96,6 +102,39 @@
       .amount {
         font-weight: 500;
         color: #28a745;
+      }
+      @media (max-width: 768px) {
+        .cost-table {
+          font-size: 12px;
+          min-width: 500px;
+        }
+        .cost-table th,
+        .cost-table td {
+          padding: 8px 10px;
+        }
+        .cost-table th {
+          font-size: 11px;
+        }
+        .total-cost {
+          font-size: 20px;
+        }
+      }
+      @media (max-width: 480px) {
+        .cost-table {
+          font-size: 11px;
+          min-width: 450px;
+        }
+        .cost-table th,
+        .cost-table td {
+          padding: 6px 8px;
+        }
+        .cost-table th {
+          font-size: 10px;
+          letter-spacing: 0.3px;
+        }
+        .total-cost {
+          font-size: 18px;
+        }
       }
       .run-section {
         margin-bottom: 30px;
@@ -340,19 +379,33 @@ Let $z$ be a complex number such that $|z|=\frac{1}{2}$. Let $w$ be a randomly c
         </div>
         <h4>Issues Identified</h4>
         <div class="error-section">
-          <strong>• Overly generic reasoning and weak concept integration</strong>
+          <h5>Key Observations</h5>
           <p>
-            Gives a long, teacher-like explanation of how someone might design a problem — PromptCoT
-            <em>constructs</em>, not <em>lectures</em>. From the concept list (fractional arithmetic, nested operations,
-            estimating, equality of complex numbers), the model touches maybe 1.5 of these and does not weave them
-            together like PromptCoT is supposed to.
+            Empirical analysis reveals that the model's output deviates from the concept-rationale-prompt paradigm
+            described in the paper. The generated rationale adopts a meta-pedagogical structure (describing how problems
+            are designed) rather than constructing a step-by-step reasoning chain that synthesizes foundational
+            concepts into a coherent problem statement. Analysis of the concept integration shows that from the
+            provided foundational concepts (fractional arithmetic, nested operations, quantitative estimation, complex
+            number equality), the model incorporates approximately 1.5 concepts with superficial treatment, failing to
+            demonstrate the interweaving synthesis mechanism central to PromptCoT's methodology.
           </p>
 
-          <strong>• Nonsensical probability scenario and fluff problem</strong>
+          <h5>Root Causes</h5>
           <p>
-            "The probability that w has a specific property…" is undefined and mathematically meaningless — a
-            deterministic variable cannot have a probability without a distribution. The final problem is ambiguous,
-            doesn't match difficulty level (HMMT), and lacks structural coherence.
+            The generated problem contains a fundamental mathematical inconsistency: the statement "The probability that
+            w has a specific property" lacks a well-defined probability space, as w is presented as a deterministic
+            variable without an associated distribution. This indicates a breakdown in the constraint satisfaction
+            mechanism that should ensure mathematical validity. Additionally, the problem statement does not align with
+            the specified difficulty level (AIME) and exhibits structural ambiguity that would prevent unambiguous
+            solution.
+          </p>
+
+          <h5>Implications</h5>
+          <p>
+            This output pattern suggests a limitation in the model's ability to maintain fidelity to the PromptCoT
+            framework when conditioned on foundational concepts. The observed behavior indicates potential issues in
+            dataset alignment, where the training distribution may not sufficiently emphasize the concept-synthesis
+            objective over generic problem-description patterns.
           </p>
         </div>
       </div>
@@ -444,39 +497,61 @@ This problem requires students to use quantitative reasoning, complex numbers, f
 
         <h3>Issues Identified</h3>
         <div class="error-section">
-          <strong>• Degenerates into teaching essay with fake PromptCoT style</strong>
+          <h5>Key Observations</h5>
           <p>
-            Instead of reasoning steps that produce a problem, it gives an explanation of "how teachers design problems"
-            — a <strong>hallucinated meta-guide</strong>, not a reasoning chain. It mimics the <em>shape</em> of
-            reasoning but contains no real dependency, genuine logic, or coherent synthesis — classic "synthetic
-            reasoning hallucination."
+            Analysis of the model's output reveals a structural deviation from the expected rationale-prompt paradigm.
+            Rather than generating a reasoning chain that produces a problem through concept synthesis, the model
+            produces a meta-pedagogical explanation describing how problems are designed. The output exhibits the
+            superficial structure of step-by-step reasoning (numbered steps, hierarchical organization) but lacks the
+            logical dependencies and coherent synthesis required by the PromptCoT framework. This pattern is consistent
+            with what has been described in the literature as synthetic reasoning hallucination, where models generate
+            reasoning-like text without genuine logical structure.
           </p>
 
-          <strong>• Mathematically invalid problem and ignores foundational concepts</strong>
+          <h5>Root Causes</h5>
           <p>
-            "What is the probability that a and b are distinct complex numbers?" has no randomness → probability is
-            undefined → the problem is <em>nonsense</em>. It invents random talk about sums, products, and estimating
-            complex numbers, but these were NOT the concepts provided.
+            The generated problem statement contains a fundamental mathematical error: "What is the probability that a
+            and b are distinct complex numbers?" lacks a well-defined probability space, as the variables a and b are
+            deterministically constrained by the given conditions (|a+b| = |a-b| = 1) without an associated random
+            distribution. Additionally, the rationale references concepts (sums, products, estimation techniques) that
+            were not included in the provided foundational concept set, indicating a failure in concept anchoring
+            during the generation process.
+          </p>
+
+          <h5>Implications</h5>
+          <p>
+            This output pattern from the released model suggests limitations in the training methodology or dataset
+            composition. The observed behavior indicates that the model has not learned to maintain strict adherence to
+            the foundational concept constraints, and instead generates content that superficially matches the expected
+            format while failing to satisfy the core requirements of the PromptCoT framework.
           </p>
         </div>
 
         <h3>Root Causes Across All Runs</h3>
         <div class="error-section">
-          <strong> Dataset gravity wells</strong>
+          <h5>Dataset Distribution Issues</h5>
           <p>
-            The model falls into: Codeforces mode, math-solver mode, explanation mode. This means PromptCoT-style
-            behavior wasn't dominant enough in training.
+            Empirical observations across multiple experimental runs indicate that the model exhibits mode collapse into
+            task-specific attractor basins: competitive programming problem format (Codeforces-style), mathematical
+            problem-solving mode, and pedagogical explanation mode. This suggests that PromptCoT-specific behavior was not
+            sufficiently dominant in the training distribution, leading to the model defaulting to patterns from
+            auxiliary training data.
           </p>
 
-          <strong> Lack of strong anchoring</strong>
+          <h5>Constraint Enforcement Failure</h5>
           <p>
-            The foundational-concepts → problem pipeline is not rigidly enforced. The model slips into whatever pattern
-            it finds easiest.
+            The foundational-concepts → problem synthesis pipeline is not rigidly enforced during generation. The model
+            demonstrates a tendency to deviate from provided concept constraints and instead generates content following
+            the path of least resistance, indicating insufficient training signal for concept anchoring or inadequate
+            prompting pressure during inference.
           </p>
 
-          <strong> Not enough true PromptCoT exemplars</strong>
+          <h5>Training Data Limitations</h5>
           <p>
-            PromptCoT problems require a very specific pattern of reasoning — more curated samples are likely needed.
+            The PromptCoT framework requires a highly specific pattern of reasoning that integrates foundational
+            concepts through a structured synthesis process. The observed failures suggest that the training dataset may
+            lack sufficient high-quality exemplars demonstrating this specific reasoning pattern, or that the data
+            distribution does not adequately emphasize the concept-synthesis objective over generic problem generation.
           </p>
         </div>
       </div>
@@ -520,18 +595,30 @@ This problem requires students to use quantitative reasoning, complex numbers, f
         </div>
         <h4>Issues Identified</h4>
         <div class="error-section">
-          <strong>• Completely wrong task interpretation and severe concept drift</strong>
+          <h5>Key Observations</h5>
           <p>
-            The model invents a <em>system of modular congruences</em> with bizarre instructions like "do not use
-            mathematical symbols" — has <strong>zero relation</strong> to PromptCoT's intended behavior. Foundational
-            concepts (quantitative reasoning, complex numbers, nested functions) were ignored; output jumped to
-            unrelated math territory (mod 11/13/17) → classic uncontrolled mode collapse.
+            The model output demonstrates a complete failure to adhere to the PromptCoT task specification. Instead of
+            generating a rationale-prompt pair that synthesizes the provided foundational concepts, the model produces
+            a system of modular congruences with no relationship to the input concepts (quantitative reasoning, complex
+            numbers, nested functions). The output format deviates entirely from the expected structure, omitting the
+            rationale section and concept integration mechanism entirely.
           </p>
 
-          <strong>• Hallucinated constraints and no PromptCoT structure</strong>
+          <h5>Root Causes</h5>
           <p>
-            The "do not use symbols" instruction is pure hallucination. There is no rationale, concept integration, or
-            problem synthesis — just an unrelated, randomly generated task.
+            The generated problem includes constraints that were not present in the input specification (e.g., "do not
+            use mathematical symbols"), indicating hallucination of task requirements. The complete absence of the
+            rationale-prompt structure and the shift to an unrelated mathematical domain (modular arithmetic) suggests
+            uncontrolled mode collapse, where the model defaults to a training distribution mode that is incompatible
+            with the PromptCoT framework.
+          </p>
+
+          <h5>Implications</h5>
+          <p>
+            This failure mode indicates a fundamental misalignment between the model's learned behavior and the
+            PromptCoT task distribution. The observed behavior suggests that the training process did not successfully
+            establish the concept-rationale-prompt mapping, or that the model's training distribution contained
+            insufficient signal to distinguish PromptCoT generation from other mathematical problem generation tasks.
           </p>
         </div>
       </div>
@@ -607,18 +694,32 @@ pass this pretest.</code></pre>
         </div>
         <h4>Issues Identified</h4>
         <div class="error-section">
-          <strong>• Switched into Codeforces mode with complete mode collapse</strong>
+          <h5>Key Observations</h5>
           <p>
-            Instead of generating a reasoning-based math problem, the model outputs a full competitive programming
-            problem (I/O format, constraints, sample cases). The model is "stuck" in a coding-task attractor basin —
-            clear sign of poor data balance or weak prompting pressure.
+            The model output demonstrates a complete shift away from the PromptCoT generation task toward competitive
+            programming problem format. Instead of generating a rationale-prompt pair that synthesizes foundational
+            concepts, the model produces a full competitive programming problem specification including input/output
+            format, constraints, sample test cases, and submission instructions. This indicates mode collapse into a
+            task-specific attractor basin from the training distribution.
           </p>
 
-          <strong>• Total disconnection from foundational concepts and lack of structure</strong>
+          <h5>Root Causes</h5>
           <p>
-            The concepts (complex numbers, nested operations, logical reasoning) vanish. Output:
-            <em>lucky numbers problem</em>. No step-by-step synthesis, concept integration, or meta reasoning — the
-            model ignored everything it was asked to condition on.
+            The generated problem (a "lucky numbers" problem) shows no relationship to the provided foundational
+            concepts (complex numbers, nested operations, logical reasoning). The output completely omits the
+            rationale-prompt structure, step-by-step concept synthesis, and meta-reasoning components required by the
+            PromptCoT framework. This suggests that the model's conditioning on foundational concepts was ineffective,
+            and the model defaulted to generating content from a different task distribution (competitive programming
+            problems).
+          </p>
+
+          <h5>Implications</h5>
+          <p>
+            This failure mode indicates a fundamental issue with data balance in the training distribution or
+            insufficient prompting pressure to maintain the PromptCoT task structure. The observed behavior suggests that
+            competitive programming problem formats were overrepresented in the training data relative to PromptCoT
+            exemplars, or that the model's learned mapping from concepts to problems was not sufficiently robust to
+            prevent mode collapse into alternative task formats.
           </p>
         </div>
       </div>
@@ -690,17 +791,33 @@ Suppose x + y is 1.4, which is closer to 1 than to 2, so k would be 1. Similarly
         </div>
         <h4>Issues Identified</h4>
         <div class="error-section">
-          <strong>• Model solves instead of generates, drifts into analysis mode</strong>
+          <h5>Key Observations</h5>
           <p>
-            It produces solution-like reasoning for a geometry probability problem instead of synthesizing a new
-            problem. Typical issue when exposed to math reasoning datasets: defaults to <em>solving</em>, not
-            <em>designing</em>. Does not reference foundational concepts or output in PromptCoT structure.
+            The model output demonstrates a task confusion failure mode: instead of generating a rationale-prompt pair
+            that synthesizes foundational concepts into a new problem, the model produces solution-oriented reasoning
+            for an existing problem statement. The output format resembles mathematical problem-solving chains (as found
+            in reasoning datasets) rather than problem generation chains (as required by PromptCoT). This indicates that
+            the model has defaulted to a problem-solving mode from its training distribution rather than maintaining the
+            problem-generation objective.
           </p>
 
-          <strong>• Wrong format and random content</strong>
+          <h5>Root Causes</h5>
           <p>
-            No meta-rationale, structured steps, or final PROBLEM section. Invents a problem about "closest integer to
-            x+y in the unit disk" — unrelated to foundational concepts.
+            The output completely omits the PromptCoT structure: there is no meta-rationale section, no step-by-step
+            concept synthesis, and no final [PROBLEM] delimiter. The generated problem (involving closest integer
+            calculations in the unit disk) shows no relationship to the provided foundational concepts, suggesting that
+            the model's conditioning on concept constraints was ineffective. The observed behavior is consistent with
+            exposure to mathematical reasoning datasets during training, where the model learned to solve problems
+            rather than generate them.
+          </p>
+
+          <h5>Implications</h5>
+          <p>
+            This failure mode indicates that the training distribution may have contained an imbalance between
+            problem-solving examples and problem-generation examples, or that the model's learned task representation
+            does not sufficiently distinguish between these objectives. The observed behavior suggests that additional
+            training signal or architectural modifications may be necessary to prevent the model from defaulting to
+            problem-solving mode when the task requires problem generation.
           </p>
         </div>
       </div>
@@ -710,96 +827,98 @@ Suppose x + y is 1.4, which is closer to 1 than to 2, so k would be 1. Similarly
       <h2>Cost Breakdown Analysis</h2>
       <div class="total-cost">Total: $127.66</div>
 
-      <table class="cost-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Source</th>
-            <th>Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr class="collapsible-header collapsed" onclick="toggleCollapse(this)">
-            <td>2025/11/02 - 2025/11/22</td>
-            <td>7 Add credits</td>
-            <td>4 Training runs</td>
-            <td>Vast.ai</td>
-            <td class="amount">$135</td>
-          </tr>
-          <tr class="collapsible-content collapsed">
-            <td>2025/11/22 19:54</td>
-            <td>Add credit</td>
-            <td>Manual Payment: Stripe VISA...4463</td>
-            <td>Vast.ai</td>
-            <td class="amount">$40</td>
-          </tr>
-          <tr class="collapsible-content collapsed">
-            <td>2025/11/22 00:30</td>
-            <td>Add credit</td>
-            <td>Manual Payment: Stripe VISA...4463</td>
-            <td>Vast.ai</td>
-            <td class="amount">$40</td>
-          </tr>
-          <tr class="collapsible-content collapsed">
-            <td>2025/11/15 22:37</td>
-            <td>Add credit</td>
-            <td>Manual Payment: Stripe VISA...4463</td>
-            <td>Vast.ai</td>
-            <td class="amount">$20</td>
-          </tr>
-          <tr class="collapsible-content collapsed">
-            <td>2025/11/15 12:23</td>
-            <td>Add credit</td>
-            <td>Manual Payment: Stripe VISA...4463</td>
-            <td>Vast.ai</td>
-            <td class="amount">$10</td>
-          </tr>
-          <tr class="collapsible-content collapsed">
-            <td>2025/11/14 18:19</td>
-            <td>Add credit</td>
-            <td>Manual Payment: Stripe VISA...4463</td>
-            <td>Vast.ai</td>
-            <td class="amount">$10</td>
-          </tr>
-          <tr class="collapsible-content collapsed">
-            <td>2025/11/02 21:26</td>
-            <td>Add credit</td>
-            <td>Manual Payment: Stripe VISA...4463</td>
-            <td>Vast.ai</td>
-            <td class="amount">$10</td>
-          </tr>
-          <tr class="collapsible-content collapsed">
-            <td>2025/11/02 09:18</td>
-            <td>Add credit</td>
-            <td>Manual Payment: Stripe VISA...4463</td>
-            <td>Vast.ai</td>
-            <td class="amount">$5</td>
-          </tr>
-          <tr>
-            <td>—</td>
-            <td>Unused credits</td>
-            <td>Remaining balance</td>
-            <td>Vast.ai</td>
-            <td class="amount" style="color: #28a745">-$8.34</td>
-          </tr>
-          <tr>
-            <td>—</td>
-            <td>Key usage</td>
-            <td>Annotation - promptCoT2.0</td>
-            <td>openrouter.ai</td>
-            <td class="amount">$0.04</td>
-          </tr>
-          <tr>
-            <td>—</td>
-            <td>Key usage</td>
-            <td>Annotation - promptCoT</td>
-            <td>openrouter.ai</td>
-            <td class="amount">$0.96</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="cost-table-wrapper">
+        <table class="cost-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Description</th>
+              <th>Source</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="collapsible-header collapsed" onclick="toggleCollapse(this)">
+              <td>2025/11/02 - 2025/11/22</td>
+              <td>7 Add credits</td>
+              <td>4 Training runs</td>
+              <td>Vast.ai</td>
+              <td class="amount">$135</td>
+            </tr>
+            <tr class="collapsible-content collapsed">
+              <td>2025/11/22 19:54</td>
+              <td>Add credit</td>
+              <td>Manual Payment: Stripe VISA...4463</td>
+              <td>Vast.ai</td>
+              <td class="amount">$40</td>
+            </tr>
+            <tr class="collapsible-content collapsed">
+              <td>2025/11/22 00:30</td>
+              <td>Add credit</td>
+              <td>Manual Payment: Stripe VISA...4463</td>
+              <td>Vast.ai</td>
+              <td class="amount">$40</td>
+            </tr>
+            <tr class="collapsible-content collapsed">
+              <td>2025/11/15 22:37</td>
+              <td>Add credit</td>
+              <td>Manual Payment: Stripe VISA...4463</td>
+              <td>Vast.ai</td>
+              <td class="amount">$20</td>
+            </tr>
+            <tr class="collapsible-content collapsed">
+              <td>2025/11/15 12:23</td>
+              <td>Add credit</td>
+              <td>Manual Payment: Stripe VISA...4463</td>
+              <td>Vast.ai</td>
+              <td class="amount">$10</td>
+            </tr>
+            <tr class="collapsible-content collapsed">
+              <td>2025/11/14 18:19</td>
+              <td>Add credit</td>
+              <td>Manual Payment: Stripe VISA...4463</td>
+              <td>Vast.ai</td>
+              <td class="amount">$10</td>
+            </tr>
+            <tr class="collapsible-content collapsed">
+              <td>2025/11/02 21:26</td>
+              <td>Add credit</td>
+              <td>Manual Payment: Stripe VISA...4463</td>
+              <td>Vast.ai</td>
+              <td class="amount">$10</td>
+            </tr>
+            <tr class="collapsible-content collapsed">
+              <td>2025/11/02 09:18</td>
+              <td>Add credit</td>
+              <td>Manual Payment: Stripe VISA...4463</td>
+              <td>Vast.ai</td>
+              <td class="amount">$5</td>
+            </tr>
+            <tr>
+              <td>—</td>
+              <td>Unused credits</td>
+              <td>Remaining balance</td>
+              <td>Vast.ai</td>
+              <td class="amount" style="color: #28a745">-$8.34</td>
+            </tr>
+            <tr>
+              <td>—</td>
+              <td>Key usage</td>
+              <td>Annotation - promptCoT2.0</td>
+              <td>openrouter.ai</td>
+              <td class="amount">$0.04</td>
+            </tr>
+            <tr>
+              <td>—</td>
+              <td>Key usage</td>
+              <td>Annotation - promptCoT</td>
+              <td>openrouter.ai</td>
+              <td class="amount">$0.96</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <script>
