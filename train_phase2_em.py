@@ -745,33 +745,79 @@ def run_m_step_update(m_step_triples, current_p_subfolder, iteration):
     return next_p_path
 
 def find_latest_iteration():
-    """Find the latest iteration number from HuggingFace repository."""
+    """Find the latest iteration number and recovery state from HuggingFace repository.
+
+    Returns:
+        tuple: (latest_iter, recovery_state)
+        - latest_iter: The iteration number to start from
+        - recovery_state: 'full' (both p and q exist), 'partial' (only q exists), 'none' (start from scratch)
+    """
     if not HF_TOKEN:
         log.warning("HF_TOKEN missing — cannot check HuggingFace for latest iteration")
-        return 0
-    
+        return 0, 'none'
+
     try:
         api = HfApi(token=HF_TOKEN)
         files = api.list_repo_files(repo_id=HF_REPO_ID, repo_type="model", token=HF_TOKEN)
-        
-        iterations = []
+
+        p_iterations = []
+        q_iterations = []
+
         for file_path in files:
+            # Check for p models
             if f"{HF_VERSION}/p/iter-" in file_path:
                 try:
                     parts = file_path.split(f"{HF_VERSION}/p/iter-")
                     if len(parts) > 1:
                         iter_str = parts[1].split("/")[0]
                         iter_num = int(iter_str)
-                        iterations.append(iter_num)
+                        p_iterations.append(iter_num)
                 except (ValueError, IndexError):
                     continue
-        
-        if iterations:
-            return max(iterations)
-        return 0
+
+            # Check for q models
+            if f"{HF_VERSION}/q/iter-" in file_path:
+                try:
+                    parts = file_path.split(f"{HF_VERSION}/q/iter-")
+                    if len(parts) > 1:
+                        iter_str = parts[1].split("/")[0]
+                        iter_num = int(iter_str)
+                        q_iterations.append(iter_num)
+                except (ValueError, IndexError):
+                    continue
+
+        if not p_iterations and not q_iterations:
+            return 0, 'none'
+
+        # Convert to sets for easier operations
+        p_set = set(p_iterations)
+        q_set = set(q_iterations)
+
+        # Find fully completed iterations (have both p and q models)
+        fully_completed = p_set & q_set  # Intersection
+
+        if fully_completed:
+            # Start from the next iteration after the last fully completed one
+            latest_full_iter = max(fully_completed)
+            recovery_state = 'full'
+            start_iter = latest_full_iter + 1
+        else:
+            # No fully completed iterations, check for partial completion (q models only)
+            if q_iterations:
+                # Find the highest iteration with a q model (partially completed)
+                latest_partial_iter = max(q_iterations)
+                recovery_state = 'partial'
+                start_iter = latest_partial_iter
+            else:
+                # No models at all, start from scratch
+                recovery_state = 'none'
+                start_iter = 1
+
+        return start_iter, recovery_state
+
     except Exception as e:
         log.warning(f"Failed to check HuggingFace for latest iteration: {e}")
-        return 0
+        return 0, 'none'
 
 # --- Main EM Loop ---
 def main():
@@ -794,16 +840,20 @@ def main():
         }
     )
 
-    # Check for latest iteration to resume
-    latest_iter = find_latest_iteration()
-    start_iter = latest_iter + 1
-    
-    if latest_iter > 0:
-        print(f"Resuming from iteration {start_iter}")
-        # If we finished iter N, we want to start iter N+1
-        # The starting models for iter N+1 are the outputs of iter N
-        current_p_subfolder = f"{HF_VERSION}/p/iter-{latest_iter}"
-        current_q_subfolder = f"{HF_VERSION}/q/iter-{latest_iter}"
+    # Check for latest iteration and recovery state
+    start_iter, recovery_state = find_latest_iteration()
+
+    if recovery_state == 'full':
+        print(f"Resuming from iteration {start_iter} (previous iteration fully completed)")
+        # Both p and q models exist for iter N-1, start iter N with those models
+        prev_iter = start_iter - 1
+        current_p_subfolder = f"{HF_VERSION}/p/iter-{prev_iter}"
+        current_q_subfolder = f"{HF_VERSION}/q/iter-{prev_iter}"
+    elif recovery_state == 'partial':
+        print(f"Resuming iteration {start_iter} from M-step (E-step already completed)")
+        # Only q model exists for iter N, skip E-step and go to M-step
+        current_p_subfolder = f"{HF_VERSION}/p/iter-{start_iter - 1}"  # Use previous p model
+        current_q_subfolder = f"{HF_VERSION}/q/iter-{start_iter}"     # Use current q model (already trained)
     else:
         print("Starting from scratch (Iteration 1)")
         current_p_subfolder = HF_COLD_START_P_SUBFOLDER
@@ -811,13 +861,13 @@ def main():
     
     for iteration in range(start_iter, EM_ITERS + 1):
         print(f"\n=== EM Iteration {iteration} ===")
-        
+
         # Cleanup GPU memory at start of iteration to ensure clean state
         if iteration > start_iter:
             print("  Cleaning up GPU memory at start of iteration...")
             cleanup_gpu_memory()
             log_gpu_memory("at iteration start")
-        
+
         # Calculate k and adjust number of triples for this iteration
         k = get_k_samples(iteration)
         num_triples = get_num_triples_for_iteration(iteration)
@@ -832,20 +882,28 @@ def main():
 
         # Load triples for this iteration (with adjusted count)
         triples = load_initial_triples(num_triples)
-        
-        # 1. E-Step: Generate Rationales using current q_phi
-        candidates = run_e_step_generation(triples, k, current_q_subfolder)
-        
-        # 2. E-Step: Reward & Selection (find best z*)
-        best_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
-        
-        # 3. E-Step Update: Train q_phi on best_triples (SFT)
-        # This produces q_phi^{new}
-        current_q_subfolder = run_e_step_update(best_triples, current_q_subfolder, iteration)
-        
+
+        # Check if we need to skip E-step (partial recovery)
+        skip_e_step = (iteration == start_iter and recovery_state == 'partial')
+
+        if skip_e_step:
+            print("  Skipping E-step (already completed, resuming from M-step)")
+            # Use the already-trained q model for this iteration
+            current_q_subfolder = f"{HF_VERSION}/q/iter-{iteration}"
+        else:
+            # 1. E-Step: Generate Rationales using current q_phi
+            candidates = run_e_step_generation(triples, k, current_q_subfolder)
+
+            # 2. E-Step: Reward & Selection (find best z*)
+            best_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
+
+            # 3. E-Step Update: Train q_phi on best_triples (SFT)
+            # This produces q_phi^{new}
+            current_q_subfolder = run_e_step_update(best_triples, current_q_subfolder, iteration)
+
         # 4. M-Step Prep: Generate deterministic rationales using q_phi^{new}
         m_step_triples = generate_m_step_data(triples, current_q_subfolder)
-        
+
         # 5. M-Step Update: Train p_theta on m_step_triples
         # This produces p_theta^{new}
         current_p_subfolder = run_m_step_update(m_step_triples, current_p_subfolder, iteration)
