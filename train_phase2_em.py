@@ -612,14 +612,10 @@ def run_training_step(texts, base_adapter_subfolder, output_path):
     )
     trainer.train()
     print("  Training complete")
-    
-    print(f"  Saving model to {output_path}...")
-    model.save_pretrained(output_path)
-    tokenizer.save_pretrained(output_path)
-    print("  Model saved")
-    
-    # Upload
+
+    # Upload to HuggingFace first
     if HF_TOKEN and not args.no_upload:
+        print(f"  Uploading to HuggingFace first...")
         iter_name = output_path.split('/')[-1] # iter-N
         model_type = 'p' if '/p/' in output_path else 'q'
         hf_subpath = f"{HF_VERSION}/{model_type}/{iter_name}"
@@ -629,8 +625,14 @@ def run_training_step(texts, base_adapter_subfolder, output_path):
         # Also upload to latest
         hf_latest_path = f"{HF_VERSION}/{model_type}/latest"
         api.upload_folder(folder_path=output_path, repo_id=HF_REPO_ID, path_in_repo=hf_latest_path, repo_type="model")
+        print("  Upload to HuggingFace complete")
     elif args.no_upload:
         print(f"  Skipping HuggingFace upload (--no-upload flag): {output_path}")
+
+    print(f"  Saving model locally to {output_path}...")
+    model.save_pretrained(output_path)
+    tokenizer.save_pretrained(output_path)
+    print("  Model saved locally")
     
     del model, trainer
     torch.cuda.empty_cache()
