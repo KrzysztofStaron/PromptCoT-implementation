@@ -376,9 +376,9 @@ def run_e_step_generation(triples, k, current_q_subfolder):
         model=MODEL_NAME,
         enable_lora=True,
         max_lora_rank=128,
-        gpu_memory_utilization=0.70,  # Reduced from 0.85 to account for LoRA adapter memory
-        max_num_batched_tokens=16384,  # Reduced from 32768 to prevent OOM
-        max_num_seqs=256,  # Reduced from 512 to prevent OOM
+        gpu_memory_utilization=0.8,  # Slightly increased for better throughput
+        max_num_batched_tokens=24576,  # Balanced setting for performance
+        max_num_seqs=256,  # Increased for better throughput
         enable_chunked_prefill=True,  # Better for large batches
         block_size=16,  # Memory efficiency optimization
     )
@@ -410,7 +410,7 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     
     # Paper uses temperature 1.0 for E-step sampling
     print(f"  Generating {k} samples per prompt for {len(vllm_prompts)} prompts...")
-    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=768, stop=["\nProblem:", "Problem:"])
+    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=1024, stop=["\nProblem:", "Problem:"])
     
     outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
@@ -489,7 +489,7 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     print(f"  Computing rewards for {total_candidates} candidates in batches...")
     
     # Process in batches - balanced size that worked sometimes with 128
-    BATCH_SIZE_REWARD = 96  # Compromise between speed and memory safety
+    BATCH_SIZE_REWARD = 96  # Increased for better throughput
     total_batches = (total_candidates + BATCH_SIZE_REWARD - 1) // BATCH_SIZE_REWARD
     all_rewards = []
     
@@ -501,8 +501,8 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
         # Progress logging
         print(f"    Processing reward batch {batch_num}/{total_batches} ({batch_end}/{total_candidates} candidates, {100 * batch_end / total_candidates:.1f}%)")
         
-        # Use balanced batch size for actual computation (32 sequences at a time)
-        batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, batch_size=32)
+        # Use larger batch size for actual computation (64 sequences at a time)
+        batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, batch_size=48)
         all_rewards.extend(batch_rewards)
         print(f"    Completed batch {batch_num}/{total_batches}")
     
@@ -662,9 +662,9 @@ def generate_m_step_data(triples, updated_q_subfolder):
         model=MODEL_NAME,
         enable_lora=True,
         max_lora_rank=128,
-        gpu_memory_utilization=0.70,  # Reduced from 0.85 to account for LoRA adapter memory
-        max_num_batched_tokens=32768,  # Reduced from 32768 to prevent OOM
-        max_num_seqs=256,  # Reduced from 512 to prevent OOM
+        gpu_memory_utilization=0.8,  # Slightly increased for better throughput
+        max_num_batched_tokens=24576,  # Balanced setting for performance
+        max_num_seqs=320,  # Increased for better throughput
         enable_chunked_prefill=True,
         block_size=16,
     )
@@ -696,7 +696,7 @@ def generate_m_step_data(triples, updated_q_subfolder):
     
     # Generate deterministic rationales (temperature=0.0 for deterministic)
     print(f"  Generating deterministic rationales for {len(vllm_prompts)} prompts...")
-    params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=768, stop=["\nProblem:", "Problem:"])
+    params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=1024, stop=["\nProblem:", "Problem:"])
     
     outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
