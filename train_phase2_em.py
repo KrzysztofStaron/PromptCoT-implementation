@@ -47,12 +47,13 @@ MAX_SEQ_LENGTH = 8192
 DTYPE = None
 LOAD_IN_4BIT = True
 
-EM_ITERS = 6
-BASE_NUM_TRIPLETS = 5250  # Base number of triples (used when k=3)
+EM_ITERS = 2
+BASE_NUM_TRIPLETS = 1000  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
 parser.add_argument("--no-upload", action="store_true", help="Disable uploading to HuggingFace")
+parser.add_argument("--k", type=int, default=5, help="Number of samples to generate per prompt (default: 10)")
 args = parser.parse_args()
 
 
@@ -98,9 +99,7 @@ def cleanup_old_iterations(base_dir, keep_count=3):
 
 # --- Sampling Schedule ---
 def get_k_samples(iteration):
-    if iteration <= 2: return 3
-    if iteration <= 4: return 6
-    return 10
+    return args.k  # Use constant k from command line argument
 
 def get_num_triples_for_iteration(iteration):
     """Calculate number of triples for an iteration based on k.
@@ -431,7 +430,7 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     
     return candidates
 
-def run_e_step_selection(triples, candidates, current_p_subfolder):
+def run_e_step_selection(triples, candidates, current_p_subfolder, iteration):
     """Run E-Step: Select Best Rationales using p_theta."""
     print("E-Step: Selecting Best Rationales...")
     print(f"  Computing rewards for {len(triples)} triples with {sum(len(c) for c in candidates)} total candidates")
@@ -520,7 +519,24 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
         batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, batch_size=48)
         all_rewards.extend(batch_rewards)
         print(f"    Completed batch {batch_num}/{total_batches}")
-    
+
+    # Log reward statistics to wandb
+    valid_rewards = [r for r in all_rewards if r > -100.0]  # Exclude penalty rewards
+    if valid_rewards:
+        avg_reward = sum(valid_rewards) / len(valid_rewards)
+        max_reward = max(valid_rewards)
+        min_reward = min(valid_rewards)
+        print(f"  Reward statistics: avg={avg_reward:.3f}, max={max_reward:.3f}, min={min_reward:.3f}")
+
+        wandb.log({
+            "iteration": iteration,
+            "avg_reward": avg_reward,
+            "max_reward": max_reward,
+            "min_reward": min_reward,
+            "num_valid_candidates": len(valid_rewards),
+            "total_candidates": len(all_rewards)
+        })
+
     # Reconstruct scores per triple and select best
     new_triples = []
     reward_idx = 0
@@ -547,7 +563,7 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
     
     return new_triples
 
-def run_training_step(texts, base_adapter_subfolder, output_path):
+def run_training_step(texts, base_adapter_subfolder, output_path, iteration):
     """Run a single training step (SFT) for either p_theta or q_phi.
 
     Loads the previous adapter (or cold-start) and continues training from it.
@@ -625,8 +641,17 @@ def run_training_step(texts, base_adapter_subfolder, output_path):
         model=model, tokenizer=tokenizer, train_dataset=ds, dataset_text_field="text",
         max_seq_length=MAX_SEQ_LENGTH, packing=True, args=training_args
     )
-    trainer.train()
+    train_result = trainer.train()
     print("  Training complete")
+
+    # Log training loss to wandb
+    final_loss = train_result.training_loss if hasattr(train_result, 'training_loss') else None
+    if final_loss is not None:
+        wandb.log({
+            "iteration": iteration,
+            "training_loss": final_loss,
+            "model_type": "p" if "/p/" in output_path else "q"
+        })
 
     # Upload to HuggingFace first
     if HF_TOKEN and not args.no_upload:
@@ -662,7 +687,7 @@ def run_e_step_update(new_triples, current_q_subfolder, iteration):
     next_q_path = f"./models/{HF_VERSION}/q/iter-{iteration}"
 
     # Train SFT to update q_phi
-    run_training_step(q_texts, current_q_subfolder, next_q_path)
+    run_training_step(q_texts, current_q_subfolder, next_q_path, iteration)
     return next_q_path
 
 def generate_m_step_data(triples, updated_q_subfolder):
@@ -756,7 +781,7 @@ def run_m_step_update(m_step_triples, current_p_subfolder, iteration):
     next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
 
     # Train SFT to update p_theta
-    run_training_step(p_texts, current_p_subfolder, next_p_path)
+    run_training_step(p_texts, current_p_subfolder, next_p_path, iteration)
     return next_p_path
 
 def find_latest_iteration():
@@ -852,7 +877,7 @@ def main():
         candidates = run_e_step_generation(triples, k, current_q_subfolder)
         
         # 2. E-Step: Reward & Selection (find best z*)
-        best_triples = run_e_step_selection(triples, candidates, current_p_subfolder)
+        best_triples = run_e_step_selection(triples, candidates, current_p_subfolder, iteration)
         
         # 3. E-Step Update: Train q_phi on best_triples (SFT)
         # This produces q_phi^{new}

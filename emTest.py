@@ -21,20 +21,11 @@ MODEL_NAME = "unsloth/DeepSeek-R1-Distill-Qwen-7B"
 
 # Model subfolders to test
 MODEL_SUBFOLDERS = {
-    -1: None,                          # Base model (no adapter)
-    0: f"{HF_VERSION}/joint",           # Joint model from Phase 0
-    1: f"{HF_VERSION}/p/iter-1",        # p_theta after iteration 1
-    2: f"{HF_VERSION}/p/iter-2",        # p_theta after iteration 2
-    3: f"{HF_VERSION}/p/iter-3",        # p_theta after iteration 3
+    0: "math-0.3/p/cold-start",  # Only run from here
 }
 
-# Output files
 OUTPUT_FILES = {
-    -1: "output_base.jsonl",
-    0: "output_iter0.jsonl",
-    1: "output_iter1.jsonl",
-    2: "output_iter2.jsonl",
-    3: "output_iter3.jsonl"
+    0: "output_math03_coldstart.jsonl"
 }
 
 # Number of examples to test per model
