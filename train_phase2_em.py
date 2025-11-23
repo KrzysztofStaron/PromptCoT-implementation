@@ -395,10 +395,16 @@ def run_e_step_generation(triples, k, current_q_subfolder):
         try:
             downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_q_subfolder}/*", token=HF_TOKEN)
             adapter_path = os.path.join(downloaded_path, current_q_subfolder)
-            print(f"  Adapter downloaded successfully")
+            print(f"  Adapter downloaded successfully to: {adapter_path}")
+
+            # Verify the adapter config exists
+            config_path = os.path.join(adapter_path, "adapter_config.json")
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Adapter config not found at {config_path}")
+
         except Exception as e:
-            print(f"  Warning: Could not download {current_q_subfolder}: {e}")
-            adapter_path = current_q_subfolder
+            print(f"  Error: Could not download or verify {current_q_subfolder}: {e}")
+            raise  # Re-raise the exception instead of falling back to invalid path
     
     # Cleanup before creating LoRA request and starting generation
     cleanup_gpu_memory()
@@ -460,6 +466,13 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
              try:
                  downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{current_p_subfolder}/*", token=HF_TOKEN)
                  p_adapter_path = os.path.join(downloaded_path, current_p_subfolder)
+                 print(f"  Adapter downloaded successfully to: {p_adapter_path}")
+
+                 # Verify the adapter config exists
+                 config_path = os.path.join(p_adapter_path, "adapter_config.json")
+                 if not os.path.exists(config_path):
+                     raise FileNotFoundError(f"Adapter config not found at {config_path}")
+
              except Exception as e:
                  print(f"Warning: Could not download {current_p_subfolder}: {e}")
                  raise
@@ -505,7 +518,28 @@ def run_e_step_selection(triples, candidates, current_p_subfolder):
         batch_rewards = compute_rewards_batched(p_model, tokenizer, batch_data, p_model.device, batch_size=48)
         all_rewards.extend(batch_rewards)
         print(f"    Completed batch {batch_num}/{total_batches}")
-    
+
+    # Log reward statistics to wandb
+    valid_rewards = [r for r in all_rewards if r > -100.0]  # Filter out penalty rewards
+    if valid_rewards:
+        mean_reward = sum(valid_rewards) / len(valid_rewards)
+        max_reward = max(valid_rewards)
+        min_reward = min(valid_rewards)
+        print(f"  Reward stats: mean={mean_reward:.3f}, max={max_reward:.3f}, min={min_reward:.3f}")
+        wandb.log({
+            "mean_reward": mean_reward,
+            "max_reward": max_reward,
+            "min_reward": min_reward,
+            "num_valid_rewards": len(valid_rewards),
+            "total_candidates": len(all_rewards)
+        })
+    else:
+        print("  Warning: No valid rewards found")
+        wandb.log({
+            "num_valid_rewards": 0,
+            "total_candidates": len(all_rewards)
+        })
+
     # Reconstruct scores per triple and select best
     new_triples = []
     reward_idx = 0
@@ -573,9 +607,18 @@ def run_training_step(texts, base_adapter_subfolder, output_path):
         else:
             # Download adapter from HF if not available locally
             print(f"  Downloading adapter from {HF_REPO_ID} subfolder {base_adapter_subfolder}...")
-            downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{base_adapter_subfolder}/*", token=HF_TOKEN)
-            adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
-            print(f"  Adapter downloaded successfully")
+            try:
+                downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{base_adapter_subfolder}/*", token=HF_TOKEN)
+                adapter_path = os.path.join(downloaded_path, base_adapter_subfolder)
+                print(f"  Adapter downloaded successfully to: {adapter_path}")
+
+                # Verify the adapter config exists
+                config_path = os.path.join(adapter_path, "adapter_config.json")
+                if not os.path.exists(config_path):
+                    raise FileNotFoundError(f"Adapter config not found at {config_path}")
+            except Exception as e:
+                print(f"  Warning: Could not download {base_adapter_subfolder}: {e}")
+                raise  # Re-raise instead of continuing without adapter
         
         model.load_adapter(adapter_path, adapter_name="base_adapter")
         model.set_adapter("base_adapter")
@@ -610,8 +653,16 @@ def run_training_step(texts, base_adapter_subfolder, output_path):
         model=model, tokenizer=tokenizer, train_dataset=ds, dataset_text_field="text",
         max_seq_length=MAX_SEQ_LENGTH, packing=True, args=training_args
     )
-    trainer.train()
+    train_result = trainer.train()
     print("  Training complete")
+
+    # Log training loss to wandb
+    training_loss = train_result.training_loss
+    print(f"  Training loss: {training_loss}")
+    wandb.log({
+        "training_loss": training_loss,
+        "step": "train"
+    })
 
     # Upload to HuggingFace first
     if HF_TOKEN and not args.no_upload:
@@ -683,10 +734,16 @@ def generate_m_step_data(triples, updated_q_subfolder):
         try:
             downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{updated_q_subfolder}/*", token=HF_TOKEN)
             adapter_path = os.path.join(downloaded_path, updated_q_subfolder)
-            print(f"  Adapter downloaded successfully")
+            print(f"  Adapter downloaded successfully to: {adapter_path}")
+
+            # Verify the adapter config exists
+            config_path = os.path.join(adapter_path, "adapter_config.json")
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Adapter config not found at {config_path}")
+
         except Exception as e:
-            print(f"  Warning: Could not download {updated_q_subfolder}: {e}")
-            adapter_path = updated_q_subfolder
+            print(f"  Error: Could not download or verify {updated_q_subfolder}: {e}")
+            raise  # Re-raise the exception instead of falling back to invalid path
     
     # Cleanup before creating LoRA request and starting generation
     cleanup_gpu_memory()
