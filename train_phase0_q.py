@@ -40,7 +40,7 @@ def parse_promptcot_dataset(examples):
         if rationale_match and problem_match:
             rationale = rationale_match.group(1).strip()
             problem = problem_match.group(1).strip()
-            text = f"<Concepts>{concepts_cleaned}</Concepts>\n<Problem>{problem}</Problem>\n<Rationale>{rationale}</Rationale>"
+            text = f"[CONCEPTS]\n{concepts_cleaned}\n[/CONCEPTS]\n\n[PROBLEM]\n{problem}\n[/PROBLEM]\n\n[RATIONALE]\n{rationale}\n[/RATIONALE]"
             texts.append(text)
             
     return {"text": texts}

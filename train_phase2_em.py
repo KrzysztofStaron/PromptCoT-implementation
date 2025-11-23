@@ -48,7 +48,7 @@ DTYPE = None
 LOAD_IN_4BIT = True
 
 EM_ITERS = 6
-BASE_NUM_TRIPLETS = 1000  # Base number of triples (used when k=3)
+BASE_NUM_TRIPLETS = 5250  # Base number of triples (used when k=3)
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description="Train PromptCoT Phase 2 EM Loop")
@@ -134,7 +134,7 @@ def compute_reward(model, tokenizer, c, x, z):
     try:
         # Compute log pθ(x | z, c)
         input_x = tokenizer(
-            f"<Concepts>{c}</Concepts>\n<Rationale>{z}</Rationale>\n<Problem>{x}</Problem>",
+            f"[CONCEPTS]\n{c}\n[/CONCEPTS]\n\n[RATIONALE]\n{z}\n[/RATIONALE]\n\n[PROBLEM]\n{x}\n[/PROBLEM]",
             return_tensors="pt"
         )
         input_x = {k: v.to(model.device) for k, v in input_x.items()}
@@ -200,8 +200,8 @@ def compute_rewards_batched(model, tokenizer, batch_data, device, batch_size=128
         batch_indices = valid_indices[batch_start:batch_end]
         
         try:
-            # Prepare batched inputs for loss_x: "<Concepts>{c}</Concepts>\n<Rationale>{z}</Rationale>\n<Problem>{x}</Problem>"
-            texts_x = [f"<Concepts>{c}</Concepts>\n<Rationale>{z}</Rationale>\n<Problem>{x}</Problem>" for c, x, z in batch_valid]
+            # Prepare batched inputs for loss_x: "[CONCEPTS]\n{c}\n[/CONCEPTS]\n\n[RATIONALE]\n{z}\n[/RATIONALE]\n\n[PROBLEM]\n{x}\n[/PROBLEM]"
+            texts_x = [f"[CONCEPTS]\n{c}\n[/CONCEPTS]\n\n[RATIONALE]\n{z}\n[/RATIONALE]\n\n[PROBLEM]\n{x}\n[/PROBLEM]" for c, x, z in batch_valid]
             inputs_x = tokenizer(texts_x, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH)
             inputs_x = {k: v.to(device) for k, v in inputs_x.items()}
             
@@ -366,8 +366,8 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     """Run E-Step: Generate Rationales using q_phi (vLLM for fast inference)."""
     print("E-Step: Generating Rationales...")
     
-    # Prepare prompts for vLLM: "<Concepts>{c}</Concepts>\n<Problem>{x}</Problem>\n<Rationale>"
-    vllm_prompts = [f"<Concepts>{t['concepts']}</Concepts>\n<Problem>{t['problem']}</Problem>\n<Rationale>" for t in triples]
+    # Prepare prompts for vLLM: "[CONCEPTS]\n{c}\n[/CONCEPTS]\n\n[PROBLEM]\n{x}\n[/PROBLEM]\n\n[RATIONALE]\n"
+    vllm_prompts = [f"[CONCEPTS]\n{t['concepts']}\n[/CONCEPTS]\n\n[PROBLEM]\n{t['problem']}\n[/PROBLEM]\n\n[RATIONALE]\n" for t in triples]
 
     log_gpu_memory("before vLLM initialization")
     print(f"  Initializing vLLM engine for {len(vllm_prompts)} prompts...")
@@ -410,7 +410,7 @@ def run_e_step_generation(triples, k, current_q_subfolder):
     
     # Paper uses temperature 1.0 for E-step sampling
     print(f"  Generating {k} samples per prompt for {len(vllm_prompts)} prompts...")
-    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=8192, stop=["\nProblem:", "Problem:"])
+    params = SamplingParams(n=k, temperature=1.0, top_p=0.95, max_tokens=8192, stop=["[/RATIONALE]", "\n[PROBLEM]", "\n[CONCEPTS]"])
     
     outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
@@ -655,9 +655,9 @@ def run_training_step(texts, base_adapter_subfolder, output_path):
 def run_e_step_update(new_triples, current_q_subfolder, iteration):
     """Train q_phi on the best selected rationales (SFT)."""
     print("E-Step: Updating q_phi...")
-    # Prepare q_phi data: "<Concepts>... <Problem>... <Rationale>{best_z}"
+    # Prepare q_phi data: "[CONCEPTS]\n{c}\n[/CONCEPTS]\n\n[PROBLEM]\n{x}\n[/PROBLEM]\n\n[RATIONALE]\n{z}\n[/RATIONALE]"
     # q_phi learns to produce the SELECTED best rationale given (c, x)
-    q_texts = [f"<Concepts>{t['concepts']}</Concepts>\n<Problem>{t['problem']}</Problem>\n<Rationale>{t['rationale']}</Rationale>" for t in new_triples]
+    q_texts = [f"[CONCEPTS]\n{t['concepts']}\n[/CONCEPTS]\n\n[PROBLEM]\n{t['problem']}\n[/PROBLEM]\n\n[RATIONALE]\n{t['rationale']}\n[/RATIONALE]" for t in new_triples]
 
     next_q_path = f"./models/{HF_VERSION}/q/iter-{iteration}"
 
@@ -669,8 +669,8 @@ def generate_m_step_data(triples, updated_q_subfolder):
     """Generate deterministic rationales for M-step using updated q_phi (vLLM for fast inference)."""
     print("M-Step Prep: Generating deterministic rationales...")
     
-    # Prepare prompts for vLLM: "<Concepts>{c}</Concepts>\n<Problem>{x}</Problem>\n<Rationale>"
-    vllm_prompts = [f"<Concepts>{t['concepts']}</Concepts>\n<Problem>{t['problem']}</Problem>\n<Rationale>" for t in triples]
+    # Prepare prompts for vLLM: "[CONCEPTS]\n{c}\n[/CONCEPTS]\n\n[PROBLEM]\n{x}\n[/PROBLEM]\n\n[RATIONALE]\n"
+    vllm_prompts = [f"[CONCEPTS]\n{t['concepts']}\n[/CONCEPTS]\n\n[PROBLEM]\n{t['problem']}\n[/PROBLEM]\n\n[RATIONALE]\n" for t in triples]
 
     log_gpu_memory("before vLLM initialization (M-step)")
     print(f"  Initializing vLLM engine for {len(vllm_prompts)} prompts...")
@@ -713,7 +713,7 @@ def generate_m_step_data(triples, updated_q_subfolder):
     
     # Generate deterministic rationales (temperature=0.0 for deterministic)
     print(f"  Generating deterministic rationales for {len(vllm_prompts)} prompts...")
-    params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=8192, stop=["\nProblem:", "Problem:"])
+    params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=8192, stop=["[/RATIONALE]", "\n[PROBLEM]", "\n[CONCEPTS]"])
     
     outputs = llm.generate(vllm_prompts, params, lora_request=lora_req)
     
@@ -749,9 +749,9 @@ def run_m_step_update(m_step_triples, current_p_subfolder, iteration):
     """Train p_theta on deterministic rationales."""
     print("M-Step: Updating p_theta...")
 
-    # Prepare p_theta data: "<Concepts>... <Rationale>{z_det} <Problem>..."
+    # Prepare p_theta data: "[CONCEPTS]\n{c}\n[/CONCEPTS]\n\n[RATIONALE]\n{z}\n[/RATIONALE]\n\n[PROBLEM]\n{x}\n[/PROBLEM]"
     # p_theta learns to generate the problem given (c, z_det)
-    p_texts = [f"<Concepts>{t['concepts']}</Concepts>\n<Rationale>{t['rationale']}</Rationale>\n<Problem>{t['problem']}</Problem>" for t in m_step_triples]
+    p_texts = [f"[CONCEPTS]\n{t['concepts']}\n[/CONCEPTS]\n\n[RATIONALE]\n{t['rationale']}\n[/RATIONALE]\n\n[PROBLEM]\n{t['problem']}\n[/PROBLEM]" for t in m_step_triples]
 
     next_p_path = f"./models/{HF_VERSION}/p/iter-{iteration}"
 
