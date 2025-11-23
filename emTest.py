@@ -182,7 +182,7 @@ def test_joint_model(model, tokenizer, test_examples):
     print("Testing joint model (iter0)...")
 
     # Prepare all prompts for batched generation
-    prompts = [f"Concepts: {example['concepts']}\nProblem:" for example in test_examples]
+    prompts = [f"Concepts: {example['concepts']}\nRationale:" for example in test_examples]
     print(f"  Generating for {len(prompts)} prompts in batches...")
 
     # Generate in batches
@@ -195,7 +195,6 @@ def test_joint_model(model, tokenizer, test_examples):
             "input": example['concepts'],
             "output": generated_text,
             "ground_truth_problem": example['problem'],
-            "ground_truth_rationale": example['rationale']
         })
 
     return results
@@ -205,7 +204,7 @@ def test_p_theta_model(model, tokenizer, test_examples):
     print("Testing p_theta model...")
 
     # Prepare all prompts for batched generation
-    prompts = [f"Concepts: {example['concepts']}\nRationale: {example['rationale']}\nProblem:" for example in test_examples]
+    prompts = [f"Concepts: {example['concepts']}\nRationale:" for example in test_examples]
     print(f"  Generating for {len(prompts)} prompts in batches...")
 
     # Generate in batches
@@ -215,10 +214,9 @@ def test_p_theta_model(model, tokenizer, test_examples):
     results = []
     for example, generated_text in zip(test_examples, generated_texts):
         results.append({
-            "input": f"{example['concepts']}\n{example['rationale']}",
+            "input": f"Concepts: {example['concepts']}\nRationale: {example['rationale']}\nProblem:",
             "output": generated_text,
             "ground_truth_problem": example['problem'],
-            "ground_truth_rationale": example['rationale']
         })
 
     return results
