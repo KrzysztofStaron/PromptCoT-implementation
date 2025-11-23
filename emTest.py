@@ -22,6 +22,7 @@ LOAD_IN_4BIT = True
 
 # Model subfolders to test
 MODEL_SUBFOLDERS = {
+    -1: None,                          # Base model (no adapter)
     0: f"{HF_VERSION}/joint",           # Joint model from Phase 0
     1: f"{HF_VERSION}/p/iter-1",        # p_theta after iteration 1
     2: f"{HF_VERSION}/p/iter-2",        # p_theta after iteration 2
@@ -30,11 +31,15 @@ MODEL_SUBFOLDERS = {
 
 # Output files
 OUTPUT_FILES = {
+    -1: "output_base.jsonl",
     0: "output_iter0.jsonl",
     1: "output_iter1.jsonl",
     2: "output_iter2.jsonl",
     3: "output_iter3.jsonl"
 }
+
+# Number of examples to test per model
+NUM_TEST_EXAMPLES = 8
 
 def parse_promptcot_dataset(examples):
     """Parse PromptCoT dataset examples - reused from train_phase0_p.py"""
@@ -65,7 +70,7 @@ def parse_promptcot_dataset(examples):
 
     return parsed_examples
 
-def load_test_dataset(num_examples=10):
+def load_test_dataset(num_examples=NUM_TEST_EXAMPLES):
     """Load and parse test dataset"""
     print(f"Loading {num_examples} test examples...")
     ds = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split=f"train[:{num_examples}]")
@@ -81,7 +86,10 @@ def load_test_dataset(num_examples=10):
 
 def load_model_with_adapter(subfolder, adapter_name="test_adapter"):
     """Load base model and adapter from HuggingFace - reused from train_phase2_em.py"""
-    print(f"Loading model with adapter from {HF_REPO_ID}/{subfolder}...")
+    if subfolder is None:
+        print("Loading base model (no adapter)...")
+    else:
+        print(f"Loading model with adapter from {HF_REPO_ID}/{subfolder}...")
 
     # Load base model
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -93,77 +101,96 @@ def load_model_with_adapter(subfolder, adapter_name="test_adapter"):
     )
     print("  Base model loaded")
 
-    # Apply LoRA adapter structure (matches training configuration)
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=64,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=64,
-        lora_dropout=0,
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=3407,
-        use_rslora=False,
-    )
+    if subfolder is not None:
+        # Apply LoRA adapter structure (matches training configuration)
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=64,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                            "gate_proj", "up_proj", "down_proj"],
+            lora_alpha=64,
+            lora_dropout=0,
+            bias="none",
+            use_gradient_checkpointing="unsloth",
+            random_state=3407,
+            use_rslora=False,
+        )
 
-    # Load adapter
-    try:
-        # Check if local or HF
-        if os.path.exists(subfolder):
-            adapter_path = subfolder
-            print(f"  Adapter found locally: {adapter_path}")
-        else:
-            # Download adapter from HF if not available locally
-            print(f"  Downloading adapter from {HF_REPO_ID} subfolder {subfolder}...")
-            downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{subfolder}/*", token=HF_TOKEN)
-            adapter_path = os.path.join(downloaded_path, subfolder)
-            print("  Adapter downloaded successfully")
+        # Load adapter
+        try:
+            # Check if local or HF
+            if os.path.exists(subfolder):
+                adapter_path = subfolder
+                print(f"  Adapter found locally: {adapter_path}")
+            else:
+                # Download adapter from HF if not available locally
+                print(f"  Downloading adapter from {HF_REPO_ID} subfolder {subfolder}...")
+                downloaded_path = snapshot_download(repo_id=HF_REPO_ID, allow_patterns=f"{subfolder}/*", token=HF_TOKEN)
+                adapter_path = os.path.join(downloaded_path, subfolder)
+                print("  Adapter downloaded successfully")
 
-        model.load_adapter(adapter_path, adapter_name=adapter_name)
-        model.set_adapter(adapter_name)
-        print("  Adapter loaded successfully")
-    except Exception as e:
-        print(f"  Warning: Could not load adapter {subfolder}: {e}")
-        print("  Continuing with base model only")
+            model.load_adapter(adapter_path, adapter_name=adapter_name)
+            model.set_adapter(adapter_name)
+            print("  Adapter loaded successfully")
+        except Exception as e:
+            print(f"  Warning: Could not load adapter {subfolder}: {e}")
+            print("  Continuing with base model only")
 
     FastLanguageModel.for_inference(model)
     print("  Model ready for inference")
 
     return model, tokenizer
 
-def generate_with_model(model, tokenizer, prompt, max_new_tokens=1024, temperature=0.7, top_p=0.9):
-    """Generate text using the model - reused from generate_phase0.py"""
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+def generate_with_model_batched(model, tokenizer, prompts, max_new_tokens=1024, temperature=0.7, top_p=0.9, batch_size=8):
+    """Generate text using the model in batches - optimized for H200 GPU"""
+    all_generated_texts = []
 
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id,
-        )
+    for i in range(0, len(prompts), batch_size):
+        batch_prompts = prompts[i:i + batch_size]
+        print(f"    Processing batch {i//batch_size + 1}/{(len(prompts) + batch_size - 1)//batch_size} ({len(batch_prompts)} prompts)")
 
-    generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    # Remove the prompt from the output
-    generated_text = generated[len(prompt):].strip()
+        inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True, max_length=MAX_SEQ_LENGTH).to(model.device)
 
-    return generated_text
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+
+        # Decode batch
+        batch_generated = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+
+        # Remove prompts from outputs
+        batch_texts = []
+        for prompt, generated in zip(batch_prompts, batch_generated):
+            generated_text = generated[len(prompt):].strip()
+            batch_texts.append(generated_text)
+
+        all_generated_texts.extend(batch_texts)
+
+        # Clear cache between batches
+        torch.cuda.empty_cache()
+
+    return all_generated_texts
 
 def test_joint_model(model, tokenizer, test_examples):
     """Test joint model (iter0): Concepts -> Problem + Rationale"""
     print("Testing joint model (iter0)...")
+
+    # Prepare all prompts for batched generation
+    prompts = [f"Concepts: {example['concepts']}\nProblem:" for example in test_examples]
+    print(f"  Generating for {len(prompts)} prompts in batches...")
+
+    # Generate in batches
+    generated_texts = generate_with_model_batched(model, tokenizer, prompts, batch_size=8)
+
+    # Process results
     results = []
-
-    for i, example in enumerate(test_examples):
-        print(f"  Testing example {i+1}/{len(test_examples)}")
-
-        # For joint model: generate from "Concepts: {c}\nProblem:" (should produce Problem + Rationale)
-        prompt = f"Concepts: {example['concepts']}\nProblem:"
-        generated_text = generate_with_model(model, tokenizer, prompt)
-
+    for example, generated_text in zip(test_examples, generated_texts):
         results.append({
             "input_concepts": example['concepts'],
             "generated_output": generated_text,
@@ -176,15 +203,17 @@ def test_joint_model(model, tokenizer, test_examples):
 def test_p_theta_model(model, tokenizer, test_examples):
     """Test p_theta model: Concepts + Rationale -> Problem"""
     print("Testing p_theta model...")
+
+    # Prepare all prompts for batched generation
+    prompts = [f"Concepts: {example['concepts']}\nRationale: {example['rationale']}\nProblem:" for example in test_examples]
+    print(f"  Generating for {len(prompts)} prompts in batches...")
+
+    # Generate in batches
+    generated_texts = generate_with_model_batched(model, tokenizer, prompts, batch_size=8)
+
+    # Process results
     results = []
-
-    for i, example in enumerate(test_examples):
-        print(f"  Testing example {i+1}/{len(test_examples)}")
-
-        # For p_theta: generate from "Concepts: {c}\nRationale: {r}\nProblem:" (should produce Problem)
-        prompt = f"Concepts: {example['concepts']}\nRationale: {example['rationale']}\nProblem:"
-        generated_text = generate_with_model(model, tokenizer, prompt)
-
+    for example, generated_text in zip(test_examples, generated_texts):
         results.append({
             "input_concepts": example['concepts'],
             "input_rationale": example['rationale'],
@@ -208,12 +237,16 @@ def main():
     print("=" * 50)
 
     # Load test dataset
-    test_examples = load_test_dataset(10)
+    test_examples = load_test_dataset(NUM_TEST_EXAMPLES)
 
-    # Test each model
-    for iteration in range(4):
+    # Test each model (start with base model)
+    iterations_to_test = [-1, 0, 1, 2, 3]
+    for iteration in iterations_to_test:
         print(f"\n{'='*50}")
-        print(f"Testing Iteration {iteration}")
+        if iteration == -1:
+            print("Testing Base Model")
+        else:
+            print(f"Testing Iteration {iteration}")
         print(f"{'='*50}")
 
         subfolder = MODEL_SUBFOLDERS[iteration]
@@ -221,11 +254,12 @@ def main():
 
         try:
             # Load model
-            model, tokenizer = load_model_with_adapter(subfolder, f"iter{iteration}_adapter")
+            adapter_name = "base_adapter" if iteration == -1 else f"iter{iteration}_adapter"
+            model, tokenizer = load_model_with_adapter(subfolder, adapter_name)
 
             # Test model
-            if iteration == 0:
-                # Joint model (iter0)
+            if iteration == -1 or iteration == 0:
+                # Base model and joint model (iter0) - test with joint format
                 results = test_joint_model(model, tokenizer, test_examples)
             else:
                 # p_theta models (iter1-3)
@@ -237,16 +271,22 @@ def main():
             # Clean up
             del model, tokenizer
             torch.cuda.empty_cache()
-            print(f"Completed testing iteration {iteration}")
+            if iteration == -1:
+                print("Completed testing base model")
+            else:
+                print(f"Completed testing iteration {iteration}")
 
         except Exception as e:
-            print(f"Error testing iteration {iteration}: {e}")
+            if iteration == -1:
+                print(f"Error testing base model: {e}")
+            else:
+                print(f"Error testing iteration {iteration}: {e}")
             continue
 
     print("\n" + "=" * 50)
     print("EM Test Script Complete!")
     print("Generated files:")
-    for i in range(4):
+    for i in iterations_to_test:
         print(f"  - {OUTPUT_FILES[i]}")
 
 if __name__ == "__main__":
