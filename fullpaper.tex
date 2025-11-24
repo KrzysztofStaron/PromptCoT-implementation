@@ -1,0 +1,777 @@
+
+\begin{abstract}
+  % Large language models (LLMs) are rapidly evolving from conversational systems into sophisticated reasoners capable of tackling complex tasks such as Olympiad-level mathematics and competitive programming. While scaling model size and test-time computation has driven much of this progress, a persistent bottleneck remains: the scarcity of high-quality training problems. Human-curated datasets are costly and limited in scope, while existing synthetic corpora often lack sufficient difficulty and diversity, hindering their effectiveness for post-training strong models. PromptCoT~1.0 recently introduced the rationale-based paradigm for prompt synthesis, showing that incorporating intermediate reasoning steps can significantly increase the difficulty of generated problems. Building on this insight, we present PromptCoT~2.0, a principled and scalable framework that moves beyond hand-crafted instructions and domain-specific heuristics. Our method introduces an expectation–maximization (EM) optimization loop, where rationales are iteratively refined to guide prompt construction, yielding problems that are substantially harder and more varied than those in existing open-source corpora. The resulting synthetic prompts serve as a foundation for two complementary post-training regimes: (1) \emph{self-play}, where strong models improve autonomously from verifiable feedback without requiring stronger external teachers; and (2) \emph{supervised fine-tuning (SFT)}, where weaker models are trained on reasoning traces distilled from a teacher. Extensive experiments demonstrate the effectiveness of this approach. In the self-play setting, applying PromptCoT~2.0 to \texttt{Qwen3-30B-A3B-Thinking-2507} establishes new state-of-the-art results \emph{at the 30B scale}, with accuracy gains of +4.4, +4.8, and +5.3 points on AIME~24/25 and HMMT~Feb~25, +6.1 and +5.0 on LiveCodeBench v5/v6, and +35 Elo on Codeforces.  In the SFT setting, training \texttt{Qwen2.5-7B-Instruct} solely on our synthetic prompts boosts performance from weak baselines to strong, competitive results across all six benchmarks (e.g., 73.1 on AIME~24, 65.6 on AIME~25, and 53.4 on LiveCodeBench v5), demonstrating that purely synthesized problems can achieve performance on par with human-curated or hybrid datasets. Beyond accuracy, distributional and difficulty analyses confirm that PromptCoT~2.0 produces problems that differ fundamentally from prior datasets and demand substantially deeper reasoning. These results establish prompt synthesis as a powerful new axis for scaling LLM reasoning, and position PromptCoT~2.0 as a scalable foundation for the next generation of open-source reasoning models. The implementation is available at \url{https://github.com/inclusionAI/PromptCoT}.
+  
+  Large language models (LLMs) are evolving from conversational systems into strong reasoners for tasks such as Olympiad mathematics and competitive programming. While scaling parameters and test-time computation has driven progress, a key bottleneck is the lack of high-quality training problems: human-curated datasets are costly and limited, while existing synthetic corpora are often too easy or narrow. PromptCoT 1.0 showed that injecting rationales into prompt synthesis increases problem difficulty. Building on this, we present PromptCoT 2.0, a scalable framework that replaces hand-crafted heuristics with an expectation–maximization (EM) loop, where rationales are iteratively refined to guide prompt construction. This produces problems that are both harder and more diverse than prior corpora. The synthetic prompts support two post-training regimes: (1) \emph{Self-Play}, where strong models improve autonomously via verifiable feedback without stronger teachers; and (2) \emph{Supervised Fine-Tuning (SFT)}, where weaker models learn from teacher-distilled traces. Extensive experiments demonstrate the effectiveness of this approach. In self-play, applying PromptCoT 2.0 to \texttt{Qwen3-30B-A3B-Thinking-2507} sets new state-of-the-art results \emph{at the 30B scale}, with +4.4, +4.8, and +5.3 on AIME 24/25 and HMMT 25, +6.1 and +5.0 on LiveCodeBench v5/v6, and +35 Elo on Codeforces. In SFT, training \texttt{Qwen2.5-7B-Instruct} solely on synthetic prompts boosts accuracy to 73.1 (AIME 24), 65.6 (AIME 25), and 53.4 (LiveCodeBench v5), surpassing models trained on human or hybrid data. Analyses further confirm that PromptCoT 2.0 yields fundamentally harder and distributionally distinct problems. These results establish prompt synthesis as a new axis for scaling reasoning and position PromptCoT 2.0 as a scalable foundation for future open-source models. The implementation is available at \url{https://github.com/inclusionAI/PromptCoT}.
+  \end{abstract}
+  
+  
+  % \newpage
+  \section{Introduction}
+  Large language models (LLMs) have advanced from basic chatbots \citep{ouyang2022training,achiam2023gpt,hurst2024gpt4o} to sophisticated reasoners \citep{jaech2024openai,guo2025deepseekr1} capable of addressing complex tasks (e.g., Olympiad-level mathematics) through structured problem decomposition, deliberate planning, and reflective self-correction—all without reliance on external knowledge. More recently, the LLM community has begun to explore the development of agentic intelligence \citep{moonshot2025kimik2,zeng2025glm}, which aims to endow LLMs with extended capacities to interface with external tools and environments, 
+  thereby enabling the autonomous pursuit and completion of more demanding tasks \citep{phan2025humanity}. Along this trajectory, while large-scale pre-training remains the primary driver of model capability \citep{gandhi2025cognitive}, scaling test-time computation is emerging as a complementary avenue for further enhancing LLM intelligence \citep{snell2024scaling}.
+  
+  
+  As test-time scaling continues to attract growing attention within the LLM community, we posit that two lines of research are poised to become the primary technical drivers of this emerging paradigm. The first is \textit{Reinforcement Learning} (RL) \citep{guo2025deepseekr1,schulman2017proximal}, which offers a principled framework for shaping LLM output distributions via carefully designed reward signals, thereby enabling models to learn effectively from experience \citep{silver2025welcome}. The second, which has received comparatively less attention but may prove even more consequential, is \textit{Task Synthesis} \citep{yang2025swe,li2025websailor,zhao2025promptcot,liu2025webexplorer}—automatic and scalable methods for generating task data that constitute the training ground for RL and thus initiate the process of learning from experience.
+  
+  \newpage
+  While human-crafted data continues to play an important role in LLM training \citep{moshkov2025aimo,ahmad2025opencodereasoning}, we argue that synthesized task data will become increasingly central to advancing the frontier of LLM intelligence. The shift is driven by two factors: (1) as LLMs grow more capable, the quality of synthesized data will correspondingly improve; and (2) the tasks posed to LLMs will grow substantially more challenging, with their scope expanding dramatically (e.g., in the pursuit of agentic intelligence). Consequently, reliance on human-generated and curated task data will become prohibitively costly, making scalable synthesis indispensable.
+  
+  In a broad sense, task synthesis may encompass multiple dimensions, including task definition, problem generation, solution synthesis, environment construction, and even the development of evaluation protocols. In this work, we focus on \textit{Prompt Synthesis} as a simplified yet representative form of task synthesis, where an instance of a task is expressed as a textual prompt\footnote{A prompt may also incorporate multimodal elements such as images, videos, or tools. We defer the exploration of multimodal prompt synthesis to future work.}. Although prompt synthesis has contributed to recent advances in LLMs \citep{yang2025qwen3,zeng2025glm,moonshot2025kimik2,adler2024nemotron}, the underlying technical details are often scarcely disclosed. Publicly available studies, by contrast, typically rely on deliberately engineered prompts to guide powerful LLMs in generating new prompts \citep{wang2023self,xu2024wizardlm,huang2025key,tang2024mathscale,yue2024mammoth2,li2024numinamath,luo2023wizardcoder,wei2023magicoder,huang2024opencoder,xu2025kodcode,liu2025webexplorer,yang2025swe} -an approach that is neither learnable or scalable. As a result, the datasets produced often fall short in difficulty \citep{zhao2025promptcot} and diversity, particularly with respect to expression variation \citep{xu2024wizardlm} and domain coverage (i.e., being restricted to one specific domain). Recently, \citet{zhao2025promptcot} introduces ``rationale''-a form of ``thinking process''-into prompt synthesis, demonstrating substantial improvements in the difficulty of synthesized prompts. This method, however, remains dependent on human-engineered prompts and is confined to the mathematical domain. Consequently, we believe that a fully open-sourced pipeline that integrates advanced prompt synthesis and post-training methods would provide a useful resource for both advancing established capabilities (e.g., mathematical reasoning) and supporting exploration of emerging areas in LLM reasoning (e.g., agentic intelligence, scientific discovery, and beyond).
+  
+  
+  In this work, we present PromptCoT~2.0, a principled and scalable framework for prompt synthesis that extends the concept–rationale–prompt paradigm beyond the constraints of PromptCoT~1.0~\citep{zhao2025promptcot}.  
+  Our method introduces an EM-based optimization procedure in which rationales are iteratively refined to guide prompt construction, thereby generating more challenging and diverse problems across both mathematics and programming domains.  
+  Unlike prior approaches that rely heavily on hand-crafted instructions or domain-specific heuristics, PromptCoT~2.0 is fully learnable and domain-agnostic, enabling synthesis pipelines that can generalize to new reasoning tasks with minimal human intervention.  
+  
+  
+  We demonstrate the effectiveness of PromptCoT~2.0 through comprehensive experiments under two post-training regimes:  
+  (1) Self-Play, where synthesized problems provide automatically verifiable feedback that enables models to improve without stronger external teachers; and  
+  (2) Supervised Fine-Tuning (SFT), where weaker base models are trained from complete reasoning traces distilled from a teacher.  
+  In the self-play setting, PromptCoT~2.0 delivers substantial improvements over strong Qwen3 baselines and outperforms all existing open-source corpora.  
+  For example, when applied to \texttt{Qwen3-30B-A3B-Thinking-2507}, our method improves accuracy on AIME~24 from 87.7 to \textbf{92.1}, on AIME~25 from 85.0 to \textbf{89.8}, and on HMMT~Feb~25 from 71.4 to \textbf{76.7}, while also achieving notable gains on LiveCodeBench v5 (+6.1) and v6 (+5.0).  
+  Overall, these results establish new state-of-the-art performance \emph{at the 30B parameter scale} across all six benchmarks.  
+  In the SFT setting, we initialize from \texttt{Qwen2.5-7B-Instruct} and train exclusively on prompts synthesized by PromptCoT~2.0.  
+  Despite relying solely on synthetic problems, the resulting model achieves consistent improvements over both human-curated and hybrid datasets.  
+  For instance, accuracy improves from 12.8 to \textbf{73.1} on AIME~24, from 8.0 to \textbf{65.6} on AIME~25, from 2.7 to \textbf{46.5} on HMMT~Feb~25, from 14.7 to \textbf{53.4} on LiveCodeBench v5, and from 13.7 to \textbf{48.9} on LiveCodeBench v6, while also achieving the strongest Codeforces performance (706 $\to$ \textbf{1815}). Extended investigation further demonstrates that PromptCoT~2.0 produces prompts that exhibit striking semantic differences from human-created ones and are considerably more challenging than those generated by PromptCoT~1.0.
+  
+  Our contributions can be summarized as follows:
+  \begin{itemize}
+      \item We introduce a \textbf{new rationale-driven prompt synthesis method}, PromptCoT~2.0, which integrates EM optimization to jointly refine rationale generation and prompt construction. This framework moves beyond handcrafted instructions and scales naturally to multiple domains.
+      \item We show how synthesized prompts can be effectively used for \textbf{LLM post-training}. Specifically, we present two complementary regimes—self-play and supervised fine-tuning—and demonstrate consistent improvements over strong Qwen3 and Qwen2.5 baselines across six challenging benchmarks.
+      \item We contribute a large-scale corpus of \textbf{synthetic prompts fundamentally different from existing open-source datasets}, with both distributional and difficulty analyses confirming that PromptCoT~2.0 produces problems that are more diverse and substantially more challenging. This resource provides a new foundation for advancing reasoning in open-source LLMs.
+  \end{itemize}
+  
+  \section{Experiments}
+  
+  \subsection{Benchmarks}
+  
+  We evaluate our models across six diverse benchmarks spanning mathematics and code generation. 
+  Each dataset targets a different aspect of reasoning or problem-solving: 
+  (1) \textbf{AIME 24} is an annual high-school mathematics competition from the American Mathematics Competitions (AMC) series. The 2024 set contains 30 problems designed to test advanced mathematical reasoning, covering algebra, number theory, geometry, and combinatorics;
+  (2) \textbf{AIME 25} is the 2025 edition of the AIME competition, with a new set of 30 problems of comparable style and difficulty;
+  (3) \textbf{HMMT Feb 25} is a premier international high-school mathematics tournament. We evaluate on the February 2025 contest set, which contains 30 problems spanning diverse mathematical domains;
+  (4) \textbf{LiveCodeBench v5 (2408–2502)} \citep{jain2024livecodebench} is a live-updated benchmark that sources real-world coding problems from LeetCode, AtCoder, and CodeForces. We use the problems released between August 2024 and February 2025, totaling 279 problems;
+  (5) \textbf{LiveCodeBench v6 (2502–2505)}~\citep{jain2024livecodebench} extends the dataset with newer problems released between February 2025 and May 2025, containing 131 problems. This split highlights temporal generalization by evaluating on problems unseen in v5;
+  and (6) \textbf{Codeforces}~\citep{quan2025codeelo} consists of 408 real-world competitive programming problems drawn from the Codeforces platform. Problems cover a wide spectrum of algorithmic reasoning challenges and reflect authentic conditions faced in live contests.  
+  
+  \subsection{Evaluation Metrics}
+  
+  We adopt \textbf{pass@1 accuracy} as the primary evaluation metric across all benchmarks. 
+  For mathematical benchmarks (AIME 24, AIME 25, HMMT Feb 25), we report \textbf{avg@16}, where pass@1 accuracy is averaged over 16 independent generations per problem to reduce evaluation variance. 
+  For programming benchmarks (LiveCodeBench v5, LiveCodeBench v6), we report the standard \textbf{pass@1}, computed from a single generation per problem. 
+  In both cases, correctness is determined strictly: a mathematical output must exactly match the ground-truth final boxed answer, while a programming output must pass all provided functional unit tests. 
+  
+  For the Codeforces benchmark, we follow the evaluation protocol of \citet{luo2025deepcoder} and compute Elo ratings to evaluate the performance gap between models and competitive programming experts.
+  Each problem is attempted with up to 8 independent generations, and the Elo system aggregates outcomes to produce a competitive programming–style performance measure.  
+  
+  \subsection{Baselines}
+  
+  We evaluate against two complementary experimental settings: \emph{self-play} and \emph{SFT}. 
+  Both settings rely on the same family of problem curation baselines, but differ in base models and in how the released corpora are utilized.
+  
+  \paragraph{Self-Play.}
+  We compared PromptCoT~2.0 against a set of open-source corpora comprising large-scale mathematical and programming problems, as well as mixed collections. Prompts from each corpus were used to train \texttt{Qwen3-4B-Thinking-2507} and \texttt{Qwen3-30B-A3B-Thinking-2507}~\citep{yang2025qwen3} under the self-play setting. Specifically, we considered the following corpora:
+  (1) \textbf{OpenCodeReasoning}~\citep{ahmad2025opencodereasoning}, containing curated competitive programming problems from Codeforces, AtCoder, and LeetCode;
+  (2) \textbf{OpenMathReasoning}~\citep{moshkov2025aimo}, consisting of competition-style mathematics problems from AoPS and related repositories;
+  (3) \textbf{OpenThoughts3}~\citep{guha2025openthoughts}, a collection of curated cross-domain questions augmented with synthetic generation;
+  (4) \textbf{OpenR1}~\citep{openr1}, comprising curated problems from Codeforces and NuminaMath variants; and
+  (5) \textbf{PromptCoT~1.0}~\citep{zhao2025promptcot,zhao2025scaling}, a corpus of mathematics and programming problems augmented through the concept–rationale–prompt paradigm. Since the original corpora were designed for large-scale SFT and were therefore too large for self-play, we downsampled their prompt sets to ensure all methods operated on comparable data sizes.
+  
+  
+  
+  
+  
+  
+  \paragraph{SFT.} The base model used is \texttt{Qwen2.5-7B-Instruct}~\citep{yang2024qwen2_5}. For PromptCoT~1.0, we adhered to the training protocol outlined in \citet{zhao2025scaling}. For the other baselines, we directly evaluated the officially released checkpoints without any additional training or modifications. In addition, we included an \textbf{OpenThoughts3 (GPT)} variant, where the prompts are identical to those of OpenThoughts3 but the responses are generated using \texttt{GPT-OSS-120B (medium)}, allowing a controlled comparison with our method.
+  
+  
+  
+  \begin{table}[t]
+  \centering
+  \resizebox{0.9\textwidth}{!}{
+  \begin{tabular}{lcccccc}
+  \toprule
+  \textbf{Model} & \textbf{AIME 24} & \textbf{AIME 25} & \textbf{HMMT Feb 25} & \makecell{\textbf{LiveCodeBench v5} \\ \textbf{(2408--2502)}} & \makecell{\textbf{LiveCodeBench v6} \\ \textbf{(2502--2505)}} & \textbf{Codeforces} \\
+  \midrule
+  \textbf{Qwen3-4B-Thinking-2507} & 85.2 & 81.3 & 55.5 & 63.8 & 55.2 & 1852 \\ \midrule
+  \textbf{OpenCodeReasoning}      & 83.1 & 78.5 & 50.4 & 64.4 & \underline{57.1} & 1867 \\
+  \textbf{OpenMathReasoning}      & \underline{85.3} & \underline{83.0} & 56.8 & 59.7 & 48.5 & 1826 \\
+  \textbf{OpenThoughts3}          & 84.7 & 80.6 & 54.2 & \underline{65.2} & 54.4 & 1846 \\
+  \textbf{OpenR1}                 & 84.6 & 80.9 & 56.7 & 63.0 & 54.6 & 1829 \\
+  \textbf{PromptCoT 1.0}          & \underline{85.3} & 81.8 & \underline{58.6} & 64.5 & 56.7 & \underline{1878} \\ \midrule
+  \textbf{PromptCoT 2.0}          & \textbf{87.3} & \textbf{85.0} & \textbf{66.5} & \textbf{67.7} & \textbf{61.1} & \textbf{1934} \\
+  \bottomrule
+  \end{tabular}
+  }
+  \caption{Evaluation results on six benchmarks under the Self-Play setting using models with \textbf{4B} parameters. Bold values denote the best performance for each benchmark, while underlined values denote the second-best.}
+  \label{tab:baselines-4b}
+  \end{table}
+  
+  
+  \begin{table}[t]
+  \centering
+  \resizebox{0.9\textwidth}{!}{
+  \begin{tabular}{lcccccc}
+  \toprule
+  \textbf{Model} & \textbf{AIME 24} & \textbf{AIME 25} & \textbf{HMMT Feb 25} & \makecell{\textbf{LiveCodeBench v5} \\ \textbf{(2408--2502)}} & \makecell{\textbf{LiveCodeBench v6} \\ \textbf{(2502--2505)}} & \textbf{Codeforces} \\
+  \midrule
+  \textbf{Qwen3-30B-A3B-Thinking-2507} & 87.7 & 85.0 & 71.4 & 68.1 & 66.0 & 2044 \\ \midrule
+  \textbf{OpenCodeReasoning}       & 85.0 & 81.1 & 64.9 & \underline{70.8} & 67.4 & 2048 \\
+  \textbf{OpenMathReasoning}       & \underline{87.9} & 86.1 & \underline{72.2} & 65.7 & 58.4 & 2022 \\
+  \textbf{OpenThoughts3}           & 85.7 & 84.7 & 70.0 & 68.3 & 67.2 & 2019 \\
+  \textbf{OpenR1}                  & 86.3 & 84.9 & 68.9 & 68.3 & 63.7 & 2045 \\
+  \textbf{PromptCoT 1.0}           & 86.8 & \underline{87.4} & 72.0 & 69.7 & \underline{67.8} & \underline{2051} \\ 
+  \midrule
+  \textbf{PromptCoT 2.0}           & \textbf{92.1} & \textbf{89.8} & \textbf{76.7} & \textbf{74.2} & \textbf{71.0} & \textbf{2079} \\
+  \bottomrule
+  \end{tabular}
+  }
+  \caption{Evaluation results on six benchmarks under the Self-Play setting using models with \textbf{30B-A3B} parameters. Bold values denote the best performance for each benchmark, while underlined values denote the second-best.}
+  \label{tab:baselines-30b}
+  \end{table}
+  
+  \begin{table}[t]
+  \centering
+  \resizebox{1.0\textwidth}{!}{
+  \begin{tabular}{lcccccccccc}
+  \toprule
+  \textbf{Model} & \textbf{Prompt Source} & \textbf{Teacher Model} & \textbf{Dataset Size} & \textbf{Avg. Resp. Len.} & \textbf{AIME 24} & \textbf{AIME 25} & \textbf{HMMT Feb 25} & \makecell{\textbf{LCB v5} \\ \textbf{(2408--2502)}} & \makecell{\textbf{LCB v6} \\ \textbf{(2502--2505)}} & \textbf{Codeforces} \\
+  \midrule
+  \textbf{Qwen2.5-7B-Instruct} & - & - & - & - & 12.8 & 8.0 & 2.7 & 14.7 & 13.7 & 706 \\ \midrule
+  \textbf{OpenCodeReasoning} & H & DeepSeek-R1 & 0.75M & 12878.9 & 11.7 & 7.7 & 6.0 & \underline{50.5} &  42.0 & \underline{1648} \\
+  \textbf{OpenMathReasoning} & H & DeepSeek-R1 & 4.92M & 14407.5 & \textbf{73.3} & 58.1 & \underline{42.1} & 9.7 & 10.7 & 676 \\
+  \textbf{OpenThoughts3} & H+S & QwQ-32B & 1.20M & 18740.2 & 69.6 & 59.4 & 38.3 & 47.0 & 36.6 & 1630 \\
+  \textbf{OpenR1} & H & DeepSeek-R1 & 0.35M & 14974.3 & 55.6 & 39.2 & 24.6 & 40.5 & 32.8 & 1548 \\
+  \textbf{PromptCoT 1.0} & H+S & QwQ-32B & 1.25M & 16323.5 & 71.0 & \underline{60.2} & 41.6 & 47.8 & \underline{43.6} & 1645 \\ 
+  \textbf{OpenThoughts3 (GPT)} & H+S & \makecell{GPT-OSS-120B \\ (medium)} & 1.20M & 8967.2 & 52.3 & 37.3 & 24.0 & 22.2 & 21.4 & 907 \\ \midrule
+  \textbf{PromptCoT 2.0} & S & \makecell{GPT-OSS-120B \\ (medium)} & 4.77M & 7351.2 & \underline{73.1} & \textbf{65.6} & \textbf{46.5} & \textbf{53.4} & \textbf{48.9} & \textbf{1815} \\
+  \bottomrule
+  \end{tabular}
+  }
+  \caption{Evaluation results on six benchmarks under the SFT setting using models with \textbf{7B} parameters. 
+  \textbf{H} = Human-written, \textbf{S} = Synthetic, \textbf{Avg. Resp. Len.} = average response length, and \textbf{LCB} = LiveCodeBench. 
+  Bold values denote the best performance for each benchmark, while underlined values denote the second-best.}
+  \label{tab:baselines-7b}
+  \end{table}
+  
+  
+  
+  
+  \subsection{Implementation Details}
+  
+  \subsubsection{Prompt Synthesis}
+  
+  \paragraph{Code-start Initialization.} 
+  We initialized the framework using open-source problem collections, drawing 9,221 programming problems from Codeforces~\citep{penedo2025codeforces} and 6,365 mathematics problems from AoPS\footnote{\url{https://artofproblemsolving.com/}}. 
+  For each problem, we annotated associated concepts and rationales by querying four high-capacity instruction-tuned models: \texttt{Qwen2.5-32B-Instruct}, \texttt{Qwen2.5-72B-Instruct}, \texttt{Llama-3.1-70B-Instruct}~\citep{grattafiori2024llama} and \texttt{phi-4}~\citep{abdin2024phi}. 
+  The instructions used for concept extraction and rationale generation are provided in Appendix~\ref{app:concept_prompt} and Appendix~\ref{app:rationale_prompt}, respectively.
+  These annotations provided the supervision to warm-start both the rationale generation model and the prompt generation model, both of which were initialized from \texttt{Qwen2.5-32B-Base}. 
+  Models were trained with a learning rate of $2 \times 10^{-5}$, a batch size of 16, and for two epochs. 
+  
+  
+  
+  \paragraph{EM Optimization.} 
+  In the EM refinement stage, the rationale generation model (E-step) was trained with a learning rate of $2 \times 10^{-6}$, a batch size of 16, and a sampling temperature of 1.0.  
+  % For each concept–prompt pair, we sampled eight candidate rationales and selected the one achieving the highest reward to update the model parameters.  
+  In the M-step, rationales decoded deterministically from this model (temperature 0.0) were used to update the prompt generation model, which was trained with a learning rate of $2 \times 10^{-6}$ and a batch size of 16.  
+  
+  
+  \subsubsection{Post-training with Synthesized Prompts}
+  \label{sec:details_post_train}
+  \paragraph{Self-Play.} 
+  For the 4B models, we constructed a training corpus of 48,113 prompts, comprising 4,707 programming prompts and 43,406 mathematics prompts. 
+  Among the programming prompts, 1,872 were synthesized using PromptCoT~2.0, while 2,835 were drawn from Codeforces~\citep{penedo2025codeforces} and LiveCodeBench contest problems released prior to August 2024. 
+  For mathematics, 30,435 prompts were synthesized using PromptCoT~2.0 and 12,971 originate from DeepScaleR~\citep{deepscaler2025}. 
+  Each synthesized programming prompt was paired with 3–4 automatically generated unit tests using \texttt{Qwen3-32B}, while each synthesized mathematics prompt was paired with a final boxed answer obtained via majority voting over 8 generations from \texttt{Qwen3-30B-A3B-2507-Thinking}.
+  
+  For the 30B-A3B models, we prepared a dataset of 11,209 prompts, including 3,072 programming prompts and 8,137 mathematics prompts. 
+  Within programming, 1,024 prompts were synthesized using PromptCoT~2.0 and 2,048 came from Codeforces and LiveCodeBench problems (prior to August 2024). 
+  In mathematics, 3,333 prompts were synthesized using PromptCoT~2.0 and 4,804 were sourced from DeepScaleR. 
+  Similarly, synthesized programming prompts were paired with 3–4 unit tests generated by \texttt{Qwen3-32B}, while mathematics prompts were paired with final boxed answers determined through majority voting over 8 generations from \texttt{GPT-OSS-120B (medium)}.
+  
+  During self-play, we use a binary reward $u(x,y)$: $u(x,y)=1$ if (i) the generated final answer exactly matches the boxed reference for mathematics, or (ii) the generated program passes all unit tests for programming; otherwise $u(x,y)=0$. 
+  Self-play training was conducted with direct preference optimization (DPO)~\citep{rafailov2023direct}.  
+  For each prompt $x$, we sampled eight rollouts and evaluated them using the reward $u(x,y)$.  
+  Rollouts with $u(x,y)=1$ were treated as positive samples, while those with $u(x,y)=0$ were treated as negative samples.  
+  To ensure adequate task difficulty, we applied a filtering step: problems that the self-play models solved in at least half of eight independent attempts were excluded. 
+  Sampling temperatures were set to 1.25 for 4B models and 1.2 for 30B-A3B models respectively, as higher temperatures were found to substantially increase the proportion of invalid rollouts (e.g., formatting errors or corrupted outputs). 
+  Potential overlap with evaluation sets was mitigated by 13-gram matching to remove contaminated instances~\citep{yang2024qwen2_5}. 
+  All self-play training runs used a batch size of 16 and a learning rate of $1 \times 10^{-6}$. 
+  
+  \paragraph{SFT.}
+  For the SFT setting, we employed \texttt{GPT-OSS-120B (medium)} as the teacher model. 
+  All training prompts were synthesized using PromptCoT~2.0, \textit{without} incorporating external problem collections. 
+  We applied a light filtering step, discarding instances where the teacher failed to produce a valid final boxed answer (for mathematics) or an executable code snippet (for programming). 
+  This process produced a corpus of 4,766,890 prompts, consisting of 1,188,505 programming prompts and 3,578,385 mathematics prompts. 
+  Training was performed with a batch size of 1,024 and a learning rate of $8 \times 10^{-5}$.
+  
+  
+  
+  
+  \subsection{Main Results}
+  \paragraph{Self-Play Setting.}
+  Table~\ref{tab:baselines-4b} and Table~\ref{tab:baselines-30b} report the results of self-play experiments, from which several noteworthy observations emerge: (1) Incorporating rationales proves beneficial for synthesizing high-quality prompts, even when implemented in a straightforward manner through prompt engineering (i.e., PromptCoT~1.0). 
+  (2) PromptCoT~2.0 exhibits superior data efficiency: in the 4B setting, it attains superior results using only about 90\% of the math prompts and 10\% of the code prompts compared to OpenMathReasoning and OpenCodeReasoning. The 30B setting further reduces the required data while achieving even stronger gains.
+  (3) While both OpenThoughts3 and OpenR1 include a substantial proportion of high-quality, human-crafted mathematics and programming questions, they generally fail to provide further gains for strong models such as \texttt{Qwen3-4B-Thinking-2507} and \texttt{Qwen3-30B-A3B-Thinking-2507}. A plausible explanation is that such data may have already been incorporated into the training of these models. In contrast, despite the already strong capabilities of the base models, prompts synthesized by PromptCoT~2.0 deliver consistent and significant improvements across a wide range of mathematical and programming tasks, underscoring the considerable potential of prompt synthesis in advancing the frontier of reasoning LLMs. (4) Finally, the advantage of PromptCoT~2.0 over the baseline methods becomes even more pronounced on challenging tasks such as HMMT, a gain that can be attributed to its EM-based rationale generation, which provides stronger inductive signals for synthesizing sufficiently difficult questions for these benchmarks.
+  
+  \paragraph{SFT Setting.}
+  We further evaluate PromptCoT~2.0 under the SFT setting, with results presented in Table~\ref{tab:baselines-7b}. From the results, we draw several key observations: (1) With 100\% synthesized prompts, PromptCoT~2.0 delivers strong performance across all benchmarks. Given that prompt synthesis is far more scalable than manual curation, these results highlight the considerable potential of scaling synthetic data for future advances in LLM reasoning. (2) Beyond its superior performance, the dataset produced by PromptCoT~2.0 also exhibits substantially shorter reasoning traces, leading to notable computational savings during inference. While this property may largely stem from the teacher model, the released dataset—owing to its scale, quality, and compact responses—stands to provide significant benefit to the broader community.
+  
+  
+  
+  
+  
+  
+  
+  \begin{table}[t]
+  \centering
+  \resizebox{0.9\textwidth}{!}{
+  \begin{tabular}{lcccccc}
+  \toprule
+  \textbf{Model Variant} & \textbf{AIME 24} & \textbf{AIME 25} & \textbf{HMMT Feb 25} & \makecell{\textbf{LiveCodeBench v5} \\ \textbf{(2408--2502)}} & \makecell{\textbf{LiveCodeBench v6} \\ \textbf{(2502--2505)}} & \textbf{Codeforces} \\
+  \midrule
+  \textbf{PromptCoT 2.0 (full)} & \textbf{73.1} & \textbf{65.6} & \textbf{46.5} & \textbf{53.4} & \textbf{48.9} & \textbf{1815} \\ \midrule
+  \quad -- Code-start            & 72.1 & 63.9 & 45.3 & 50.4 & 43.6 & 1677 \\
+  \quad -- EM                    & 69.8 & 59.0 & 41.3 & 44.9 & 44.2 & 1592 \\
+  \bottomrule
+  \end{tabular}
+  }
+  \caption{Ablation results under the SFT setting using models with \textbf{7B} parameters. Bold numbers indicate the highest performance.}
+  \label{tab:ablation}
+  \end{table}
+  
+  
+  \subsection{Ablation Study}
+  
+  We conducted an ablation study under the SFT setting using 7B models to evaluate the contribution of each component in PromptCoT~2.0. Specifically, we considered two variants: (1) removal of the cold-start stage, denoted as ``- Code-start''; and (2) removal of the EM optimization stage, denoted as ``- EM''. The results are summarized in Table~\ref{tab:ablation}.
+  
+  The full PromptCoT~2.0 consistently outperforms both ablated variants across all six benchmarks, underscoring the necessity of both stages. Excluding the cold-start stage leads to a moderate but consistent performance decline, showing that high-quality initial annotations from large teacher models are essential for stabilizing the subsequent training loop. In contrast, removing the EM optimization stage causes the largest performance drop, particularly on HMMT and Codeforces, demonstrating that the iterative refinement of rationales and prompts is central to the success of our approach.
+  
+  
+  
+  \begin{figure}[t]
+      \centering
+      % First row
+      \begin{subfigure}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth]{selfplay_code.pdf}
+          \caption{Self-play on code benchmarks.}
+      \end{subfigure}
+      \hfill
+      \begin{subfigure}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth]{selfplay_math.pdf}
+          \caption{Self-play on math benchmarks.}
+      \end{subfigure}
+  
+      % Second row
+      \vspace{0.4em}
+      \begin{subfigure}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth]{sft_code.pdf}
+          \caption{SFT on code benchmarks.}
+      \end{subfigure}
+      \hfill
+      \begin{subfigure}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth]{sft_math.pdf}
+          \caption{SFT on math benchmarks.}
+      \end{subfigure}
+  
+      \caption{Learning curves of PromptCoT~2.0 compared with baseline methods.}
+      \label{fig:learning_curves}
+  \end{figure}
+  
+  
+  \subsection{Scaling Properties}
+  \label{sec:scaling}
+  
+  We next examined the scaling behavior of PromptCoT~2.0 compared to curation-based baselines under both the self-play and the SFT settings.  
+  For self-play experiments, we initialized from \texttt{Qwen3-4B-Thinking-2507} and progressively increase the number of training examples.  
+  For SFT experiments, we initialized from \texttt{Qwen2.5-7B-Instruct}, again varying the amount of training data.  
+  To ensure comparability, we randomly sampled each dataset to match the desired scale.  
+  We report results on mathematics and programming benchmarks separately, and in all cases we plot the average accuracy across the relevant benchmarks (AIME~24, AIME~25, HMMT~Feb~25 for mathematics; LiveCodeBench v5 and v6 for programming).  
+  
+  \paragraph{Self-play scaling.}  
+  Figure~\ref{fig:learning_curves} (a) and Figure~\ref{fig:learning_curves} (b) illustrate the effect of increasing training examples from 0 to 48k.  
+  The curation-based baselines show limited or even unstable improvements, with performance gains largely saturating beyond 24k examples.  
+  In contrast, PromptCoT~2.0 demonstrates consistent scaling: accuracy steadily improves with additional data.  
+  This highlights the advantage of EM-guided rationale–prompt synthesis, which produces higher-quality problems that continue to yield benefits at larger scales.  
+  
+  \paragraph{SFT scaling.}  
+  Figure~\ref{fig:learning_curves} (c) and Figure~\ref{fig:learning_curves} (d) report the effect of increasing training data size from 0 to 4.8M examples.  
+  Here too, the difference between curation-based and rationale-driven synthesis is pronounced.  
+  While baselines exhibit sharp but plateauing gains, PromptCoT~2.0 achieves both higher peak performance and stronger data efficiency.  
+  
+  
+  
+  
+  \begin{figure}[t]
+      \centering
+      % Left: Code MDS
+      \begin{subfigure}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth]{code_mds.pdf}
+          \caption{MDS visualization for code datasets.}
+      \end{subfigure}
+      \hfill
+      % Right: Math MDS
+      \begin{subfigure}{0.48\textwidth}
+          \centering
+          \includegraphics[width=\linewidth]{math_mds.pdf}
+          \caption{MDS visualization for math datasets.}
+      \end{subfigure}
+  
+      \caption{Multidimensional scaling (MDS) projections of dataset-level embeddings.
+      Distances are based on cosine dissimilarity between average problem embeddings.}
+      \label{fig:dataset_mds}
+  \end{figure}
+  
+  
+  \subsection{Distributional Analysis}
+  \label{sec:distributional_analysis}
+  
+  To investigated the distributional properties of our synthesized problems relative to existing open-source datasets, we computed embeddings for each problem using the \texttt{all-MiniLM-L6-v2} sentence transformer~\citep{wang2020minilm}.  
+  For each dataset, we took the average embedding across all problems to obtain a dataset-level representation.  
+  Pairwise distances were then computed as $d(A, B) = 1 - \mathrm{cos}(A, B)$, where $\mathrm{cos}(\cdot, \cdot)$ denotes cosine similarity.  
+  We applied multidimensional scaling (MDS) to project these distances into two dimensions, yielding a visualization that captures relative relationships among datasets in a low-dimensional space.
+  
+  The results, shown in Figure~\ref{fig:dataset_mds}, reveal two notable findings:  
+  (1) Existing open-source datasets (e.g., OpenCodeReasoning, OpenMathReasoning, OpenThoughts3, and OpenR1) form tight clusters, reflecting their high similarity and shared reliance on either curated or slightly varied synthetic problems.  
+  (2) In contrast, our synthesized problems (\textsc{PromptCoT~2.0}) occupy a distinct region in the embedding space, indicating substantial distributional differences from existing corpora. This separation suggests that our rationale-driven synthesis paradigm not only generates problems at scale, but also introduces novel linguistic and structural variations beyond the scope of prior datasets.  
+  
+  
+  \begin{table}[t]
+  \centering
+  \resizebox{0.65\textwidth}{!}{
+  \begin{tabular}{lcc}
+  \toprule
+  \textbf{Dataset} & \makecell{\textbf{Qwen2.5-72B-Instruct} \\ \textbf{Accuracy} ($\downarrow$)} & 
+  \makecell{\textbf{GPT-OSS-120B (high)} \\ \textbf{Avg. Resp. Tokens} ($\uparrow$)} \\
+  \midrule
+  \textbf{OpenMathReasoning}$^\dagger$ & 28.9 & 18,436.9 \\
+  \textbf{OpenThoughts3}$^\dagger$     & 21.3 & 30,053.7 \\
+  \textbf{OpenR1}                      & 32.3 & 7,128.3 \\
+  \textbf{PromptCoT 1.0}$^\dagger$     & 24.7 & 29,425.5 \\ \midrule
+  \textbf{PromptCoT 2.0}              & \textbf{18.5} & \textbf{37,373.3} \\
+  \bottomrule
+  \end{tabular}
+  }
+  \caption{Difficulty evaluation across datasets. 
+  Lower accuracy of \texttt{Qwen2.5-72B-Instruct} indicates higher difficulty, while longer reasoning traces from \texttt{GPT-OSS-120B (high)} suggest that problems require deeper reasoning. 
+  $^\dagger$: datasets that apply explicit difficulty filtering. }
+  \label{tab:math_dataset_eval}
+  \end{table}
+  
+  \subsection{Difficulty Analysis}
+  We evaluated dataset difficulty along two complementary axes. For each dataset, we uniformly sampled 1,000 prompts and (i) measure the \emph{zero-shot} accuracy of \texttt{Qwen2.5-72B-Instruct} against reference final answers produced by \texttt{GPT-OSS-120B (high)}; and (ii) recorded the average number of reasoning tokens consumed by \texttt{GPT-OSS-120B (high)} when deriving those references. Both metrics are reported in Table~\ref{tab:math_dataset_eval}.
+  
+  From these results, we derive three key observations:
+  (1) PromptCoT 2.0 produces the most challenging problems, reflected by both the lowest accuracy (18.5\%) and the longest reasoning traces (37.4k tokens). 
+  This shows that our framework pushes problem difficulty substantially further than existing datasets. 
+  (2) Datasets such as OpenMathReasoning, OpenThoughts3, and PromptCoT~1.0 apply explicit difficulty filtering, which raises the challenge level. 
+  Nevertheless, PromptCoT~2.0 surpasses them without such filtering, demonstrating that its generative process naturally produces harder problems. 
+  
+  
+  \subsection{EM Optimization Analysis}
+  \label{sec:em-analysis}
+  
+  We tracked the negative log-likelihood (NLL) of generating problems over training steps and compared four variants: 
+  (1) \emph{With E-step}, the full EM procedure where rationales are iteratively refined by the approximate posterior; 
+  (2) \emph{Without E-step}, where rationales are sampled once and fixed throughout optimization; 
+  (3) \emph{Initialization (with rationale)}, a non-optimized reference that conditions on rationales; and 
+  (4) \emph{Initialization (w/o rationale)}, the same starting point without rationale input. 
+  Confidence intervals are reported only for the two optimized variants to capture variability across repeated runs.
+  
+  The results, shown in Figure~\ref{fig:em_nll}, yield three key insights.  
+  (1) E-step enables sharper and deeper likelihood improvements. 
+  The \emph{With E-step} curve consistently descends faster and achieves substantially lower terminal NLL compared to \emph{Without E-step}, confirming the importance of posterior-guided rationale updates.  
+  (2) Rationales substantially reduce NLL even before optimization. The large gap between \emph{Initialization (with rationale)} and \emph{Initialization (w/o rationale)} highlights the structural advantage provided by rationales in connecting concepts to prompts.  
+  (3) Iterative refinement compounds the effect. Beyond early steps, the benefit of the E-step continues to widen, suggesting that iterative alignment between the posterior and the generative model progressively yields more informative rationales and sustained gains in likelihood.
+  
+  \begin{figure}[t]
+      \centering
+      \includegraphics[width=0.75\linewidth]{em_nll_broken_axis.pdf}
+      \caption{NLL trajectories during EM optimization.  
+      Curves compare training \emph{with} and \emph{without} the E-step, alongside initialization references with and without rationales.  
+      Confidence bands (shaded) are reported for the optimized variants.}
+      \label{fig:em_nll}
+  \end{figure}
+  
+  \section{Related Works}
+  \textbf{Prompt Synthesis.} Research on prompt synthesis has emerged in tandem with the rapid advancement and widespread adoption of LLMs. Early studies investigated general-purpose methods. For instance, \citet{wang2023self} proposed generating new prompts with GPT-3 by instructing the model to imitate a small set of seed instructions, while \citet{xu2024wizardlm} introduced a self-evolution algorithm that increases the complexity of seed instructions through prompting ChatGPT. Subsequent work shifted toward synthesizing domain-specific prompts aimed at cultivating specialized LLM capabilities. Along this line, \citet{luo2023wizardmath} extended the self-evolution framework to mathematical reasoning, and \citet{huang2025key} as well as \citet{tang2024mathscale} proposed generating new math problems from key points or concepts. Most recently, \citet{zhao2025promptcot} incorporated a ``thinking process'' into math problem generation, further enhancing the difficulty of the synthesized problems. Beyond mathematics, prompt synthesis has also been applied to coding problem generation. For example, \citet{huang2024opencoder} and \citet{wei2023magicoder} explored generating programming problems from code snippets. More recently, with the growing interest in agentic intelligence, research on prompt synthesis has begun to evolve toward generation of task-oriented problems as a means of overcoming data scarcity in the development of LLM agents. For instance, \citet{li2025websailor} proposed synthesizing complex knowledge-seeking questions from knowledge graphs; \citet{liu2025webexplorer} developed an iterative question evolution method to progressively increase question difficulty; and \citet{yang2025swe} combined LLMs-based and rule-based techniques to create bugs in code derived from selected GitHub repositories.
+  A key limitation of prior work is its reliance on heuristic or single-pass generation pipelines, which often fail to capture the deeper reasoning structures needed for truly challenging problems.  
+  In contrast, our approach frames rationale–prompt co-generation as an EM procedure: the E-step refines rationales through reward-guided inference, while the M-step updates prompt synthesis conditioned on these rationales.  
+  This iterative loop provides a principled mechanism for aligning concepts, rationales, and prompts, leading to more faithful and more difficult problems in both mathematics and programming domains.
+  
+  
+  \textbf{Self-Evolution.} Progress in prompt synthesis has also paved the way for developing self-evolutionary LLMs, where prompt generation and model updating are coupled in an iterative cycle that allows models to learn from their own experience. As a promising alternative to human-curated data, such self-evolving mechanisms have attracted growing attention within the research community. Representative efforts include \citet{yuan2024self}, who leveraged the self-instruct framework \citep{wang2023self} for prompt synthesis and subsequently improved a base model via supervised fine-tuning, and \citet{zhao2025absolute}, who formalized three typical reasoning paradigms as programming tasks and iteratively combined task synthesis with reinforcement learning. PromptCoT~2.0 adopts a self-play paradigm for post-training LLMs, sharing similarities with these self-evolutionary studies. The key distinction, however, is that PromptCoT~2.0 does not rely on self-judgment, as in \citet{yuan2024self}, nor on the joint optimization of prompt synthesis and model post-training, as in \citet{zhao2025absolute}. While primarily focused on advancing prompt synthesis, PromptCoT~2.0—by virtue of the quality of its prompts and its state-of-the-art performance across diverse downstream tasks—opens avenues for future exploration along the self-evolutionary line.
+  
+  
+  
+  
+  \section{Conclusions and Future Work}
+  In this work, we introduced PromptCoT~2.0, a principled framework for rationale-driven prompt synthesis that addresses the persistent shortage of high-quality training problems for reasoning-focused LLMs.  
+  By formulating concept–rationale–prompt generation as an expectation–maximization procedure, our method iteratively refines rationales and leverages them to construct substantially more difficult and diverse problems across mathematics and programming.  
+  Beyond synthesis, we demonstrated how these problems can fuel two complementary post-training regimes: \emph{self-play}, which enables strong models to improve autonomously through verifiable feedback without reliance on ever-stronger external teachers, and \emph{supervised fine-tuning}, which allows weaker models to acquire reasoning skills from teacher-distilled traces.  Extensive experiments show that PromptCoT~2.0 not only establishes new state-of-the-art results at the 30B scale but also allows 7B models trained purely on synthetic prompts to achieve performance competitive with models trained on human-curated or hybrid datasets. 
+  Our analyses further confirm that the synthesized problems differ fundamentally from prior corpora, exhibiting higher difficulty and richer distributional diversity—qualities essential for advancing LLM reasoning.  
+  
+  Looking ahead, we view prompt synthesis as a central axis for scaling reasoning beyond brute-force model size or computation.  
+  Future work includes extending our EM-based framework to multimodal settings, integrating richer verification signals to broaden self-play, and exploring its role in the development of agentic intelligence.  
+  We hope that PromptCoT~2.0 and the accompanying dataset will provide a foundation for the next generation of open-source reasoning models and accelerate progress toward autonomous, verifiably strong LLMs.
+  
+  % \newpage
+  \appendix
+  \section{Proofs of Variational Results}
+  \label{app:proofs}
+  
+  \subsection{Proof of the ELBO (Eq.~\ref{eq:elbo})}
+  We provide a detailed derivation of the evidence lower bound.
+  
+  \begin{proof}
+  Starting from the marginal likelihood (Eq.~\ref{eq:marginal_likelihood}):
+  \begin{align*}
+  \log p_\theta(x \mid \mathbf{c})
+  &= \log \sum_{z} p_\theta(z, x \mid \mathbf{c}) \\
+  &= \log \sum_{z} q_\phi(z \mid \mathbf{c}, x) \, \frac{p_\theta(z, x \mid \mathbf{c})}{q_\phi(z \mid \mathbf{c}, x)} \\
+  &= \log \, \mathbb{E}_{q_\phi(z \mid \mathbf{c}, x)} \!\left[ \frac{p_\theta(z, x \mid \mathbf{c})}{q_\phi(z \mid \mathbf{c}, x)} \right].
+  \end{align*}
+  
+  Applying Jensen’s inequality yields
+  \begin{align*}
+  \log p_\theta(x \mid \mathbf{c})
+  &\geq \mathbb{E}_{q_\phi(z \mid \mathbf{c}, x)} \!\left[ \log \frac{p_\theta(z, x \mid \mathbf{c})}{q_\phi(z \mid \mathbf{c}, x)} \right] \\
+  &= \mathbb{E}_{q_\phi(z \mid \mathbf{c}, x)} \!\big[\log p_\theta(z, x \mid \mathbf{c})\big] 
+  - \mathbb{E}_{q_\phi(z \mid \mathbf{c}, x)} \!\big[\log q_\phi(z \mid \mathbf{c}, x)\big].
+  \end{align*}
+  
+  Adding and subtracting $\mathbb{E}_{q_\phi}\big[\log p_\theta(z \mid \mathbf{c})\big]$ gives
+  \begin{align*}
+  \log p_\theta(x \mid \mathbf{c})
+  &\geq \mathbb{E}_{q_\phi(z \mid \mathbf{c}, x)} \!\big[\log p_\theta(z, x \mid \mathbf{c})\big] 
+  - \mathrm{KL}\!\left(q_\phi(z \mid \mathbf{c}, x)\,\|\,p_\theta(z \mid \mathbf{c})\right),
+  \end{align*}
+  which is precisely Eq.~\ref{eq:elbo}.
+  \end{proof}
+  
+  \subsection{Proof of the Optimal Posterior (Eq.~\ref{eq:posterior})}
+  We now establish the form of the optimal approximate posterior.
+  
+  \begin{proof}
+  Rewriting Eq.~\ref{eq:elbo}, we obtain
+  \[
+  \log p_\theta(x \mid \mathbf{c})
+  = \mathcal{L}(q_\phi) 
+  + \mathrm{KL}\!\left(q_\phi(z \mid \mathbf{c}, x)\,\|\,p_\theta(z \mid \mathbf{c}, x)\right),
+  \]
+  where $\mathcal{L}(q_\phi)$ is the ELBO. Since the KL divergence is non-negative, the ELBO is maximized when
+  \[
+  q_\phi^\star(z \mid \mathbf{c}, x) = p_\theta(z \mid \mathbf{c}, x).
+  \]
+  By Bayes’ rule,
+  \[
+  p_\theta(z \mid \mathbf{c}, x) = \frac{p_\theta(z, x \mid \mathbf{c})}{p_\theta(x \mid \mathbf{c})}
+  \;\propto\; p_\theta(z, x \mid \mathbf{c})
+  = p_\theta(x \mid z, \mathbf{c}) \, p_\theta(z \mid \mathbf{c}),
+  \]
+  which matches Eq.~\ref{eq:posterior}.
+  \end{proof}
+  
+  
+  \section{Additional Results on Ring-Lite}
+  \label{sec:ringlite}
+  
+  We further assess generalization under the self-play setting, where training is conducted via iterative SFT. We initialize from \texttt{Ring-Lite-2506}~\citep{team2025ring}, a 16.8B-parameter model with 2.75B activated parameters, and compare its performance with our framework on mathematics (AIME~24/25) and programming (LiveCodeBench v5; 2408–2502). As shown in Table~\ref{tab:ringlite}, PromptCoT~2.0 attains consistent improvements over \texttt{Ring-Lite-2506} across all benchmarks (+3.2 on AIME~24, +1.3 on AIME~25, and +2.0 on LiveCodeBench v5), indicating that the EM-driven rationale–prompt co-optimization produces synthesized problems that transfer effectively within the self-play regime.
+  
+  \begin{table}[h]
+  \centering
+  \small
+  \begin{tabular}{lccc}
+  \toprule
+  \textbf{Model} & \textbf{AIME 24} & \textbf{AIME 25} & \textbf{LCB v5 (2408–2502)} \\
+  \midrule
+  \textbf{Ring-Lite-2506} & 76.6 & 69.1 & 60.7 \\
+  \textbf{PromptCoT~2.0} & \textbf{79.8} & \textbf{70.4} & \textbf{62.7} \\
+  \bottomrule
+  \end{tabular}
+  \caption{Evaluation results on AIME~24/25 and LiveCodeBench v5 (2408-2502) under the Self-Play setting. Bold values denote the better performance for each benchmark.}
+  \label{tab:ringlite}
+  \end{table}
+  
+  
+  
+  \section{Instruction for Concept Extraction}
+  \label{app:concept_prompt}
+  
+  
+  As part of the cold-start stage, this prompt is designed to extract domain-relevant concepts from each seed problem. It instructs the language model to identify the key mathematical or programming concepts that underlie the given task.
+  
+  \begin{tcolorbox}[colback=blue!5!white, colframe=blue!75!black, title=Concept Extraction Prompt]
+  As an expert in educational assessment, analyze this problem:
+  
+  \{problem\}
+  
+  Break down and identify \{num\_concepts\} foundational concepts being tested. List these knowledge points that:
+  \begin{itemize}
+      \item Are core curriculum concepts typically taught in standard courses,
+      \item Are precise and measurable (not vague like "understanding math"),
+      \item Are essential building blocks needed to solve this problem,
+      \item Represent fundamental principles rather than problem-specific techniques.
+  \end{itemize}
+  
+  Think through your analysis step by step, then format your response as a Python code snippet containing a list of \{num\_concepts\} strings, where each string clearly describes one fundamental knowledge point.
+  \end{tcolorbox}
+  
+  
+  \section{Instruction for Rationale Generation}
+  \label{app:rationale_prompt}
+  
+  In the cold-start stage, the following prompt instructs the language model to produce a detailed reasoning process that serves as the rationale for prompt synthesis. 
+  
+  \begin{tcolorbox}[colback=blue!5!white, colframe=blue!75!black, title=Rationale Generation Instruction]
+  Imagine you are an expert in educational problem design.
+  
+  You will be shown these components:
+  
+  \textbf{Problem:} \{problem\}
+  
+  \textbf{Fundamental Concepts:} \{list of concepts\}
+  
+  \textbf{Difficulty Level:} \{difficulty\_level\}
+  
+  Your task is to reverse-engineer a clear thinking process that shows how a teacher might design this problem. This thinking process should:
+  \begin{itemize}
+      \item Show how combining the given foundational concepts naturally leads to a problem at the specified difficulty level.
+      \item Include all key decisions and reasoning that shaped the problem design.
+      \item \textbf{(IMPORTANT)} Be so precise and detailed that another teacher following these exact steps would recreate the identical problem.
+      \item \textbf{(IMPORTANT)} Be so natural and logical that another teacher could derive the same thinking process using only the foundational concepts and difficulty level.
+  \end{itemize}
+  
+  Present your answer after ``Thinking Process:'' with the complete step-by-step thinking process described above.
+  \end{tcolorbox}
+  
+  
+  \section{Case Study}
+  
+  
+  
+  
+  \begin{figure}[ht]
+  \small
+      \centering
+      \fbox{%
+          \begin{minipage}{0.99\textwidth}
+              \vspace{0.5em}
+              \textbf{Foundational Concepts:}
+              \begin{enumerate}
+                  \item Understanding the definition and properties of divisors of a number
+                  \item Comprehending the concept of a function and its application to number theory, specifically the sum of divisors function $f(n)$
+                  \item Ability to compute the sum of a sequence of numbers, including understanding the concept of cumulative sums as represented by $F(n)$
+                  \item Knowledge of the parity (odd or even) of numbers and how it changes under addition, particularly in the context of sums of divisors
+                  \item Application of modular arithmetic to determine conditions under which $F(n)$ is odd, especially modulo 2 operations
+              \end{enumerate}
+              
+              \vspace{1em}
+              \textbf{Rationale:}
+              
+              \noindent\textbf{Step 1: Identify the Foundational Concepts} \\
+              The problem uses divisors and the sum of divisors function (Concepts 1 and 2), cumulative sums (Concept 3), parity (Concept 4), and modular arithmetic (Concept 5).
+              
+              \vspace{0.5em}
+              \noindent\textbf{Step 2: Difficulty Level} \\
+              The problem is intended for the AIME, requiring multi-step reasoning in number theory.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 3: Formulation} \\
+              Define $f(n)$ as the sum of divisors of $n$. Define $F(n)=\sum_{k=1}^n f(k)$. We want the count of $n\leq 2005$ for which $F(n)$ is odd.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 4: Analysis of Parity} \\
+              The parity of $F(n)$ is determined by the parity of $\sum_{k=1}^n f(k)$. Thus, we must characterize when $f(k)$ is odd.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 5: Characterizing Odd $f(k)$} \\
+              A number $k$ has an odd sum of divisors exactly when $k$ is a perfect square or twice a perfect square.  
+              \begin{itemize}
+                  \item This follows from the multiplicativity of $\sigma(n)$ and the fact that for odd primes $p$, $\sigma(p^e)$ is odd iff $e$ is even.  
+                  \item Therefore, the odd part of $k$ must be a square, and the power of $2$ can be $0$ or $1$.  
+              \end{itemize}
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 6: Counting Relevant $k$} \\
+              Hence
+              \[
+              F(n) \equiv \#\{k\leq n:\ k\text{ is a square}\}+\#\{k\leq n:\ k=2m^2\}\pmod 2.
+              \]
+              Equivalently,
+              \[
+              F(n)\equiv \lfloor \sqrt{n}\rfloor + \lfloor \sqrt{n/2}\rfloor \pmod 2.
+              \]
+              So $F(n)$ is odd exactly when $\lfloor \sqrt{n}\rfloor$ and $\lfloor \sqrt{n/2}\rfloor$ have opposite parity.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 7: Solving the Problem} \\
+              For $n\leq 2005$:  
+              \begin{itemize}
+                  \item $\lfloor \sqrt{2005}\rfloor = 44$  
+                  \item $\lfloor \sqrt{2005/2}\rfloor = 31$
+              \end{itemize}
+              Counting by intervals $n\in[t^2,(t+1)^2-1]$ for $t=1,\dots,44$, and checking where $\lfloor \sqrt{n/2}\rfloor$ has opposite parity to $t$, gives the total number of integers $n\leq 2005$ with $F(n)$ odd:
+              \[
+              \#\{n\leq 2005 : F(n)\text{ odd}\} = 1018.
+              \]
+  
+              \vspace{1em}
+              \textbf{Final Problem:} \\
+              For any positive integer $n$, let $f(n)$ be the sum of the divisors of $n$, and let $F(n)$ be the sum of the numbers $f(k)$ for $k = 1$ to $n$. For example, $F(4) = f(1) + f(2) + f(3) + f(4) = 1 + 3 + 4 + 7 = 15$. Find the number of positive integers $n \leq 2005$ with $F(n)$ odd.
+          \end{minipage}%
+      }
+      \caption{Case study of rationale and problem generation for a number theory AIME-level problem.}
+      \label{fig:case_study_rationale1}
+  \end{figure}
+  
+  
+  
+  \begin{figure}[htb]
+  \small
+      \centering
+      \fbox{%
+          \begin{minipage}{0.99\textwidth}
+              \vspace{0.5em}
+              \textbf{Foundational Concepts:}
+              \begin{enumerate}
+                  \item Understanding of the properties of a cube, including its edges, vertices, and faces
+                  \item Knowledge of how a plane can intersect a three-dimensional solid, specifically a cube, and the types of polygons that can be formed
+                  \item Ability to visualize and analyze geometric shapes in three dimensions, particularly the cross-sections of a cube
+                  \item Understanding of the concept of perimeter and how to calculate it for different types of polygons, especially in the context of a plane intersecting a cube
+                  \item Application of the Pythagorean theorem to calculate distances within the cube, which are essential for determining the perimeter of the intersection polygon
+              \end{enumerate}
+              
+              \vspace{1em}
+              \textbf{Rationale:}
+              
+              \noindent\textbf{Step 1: Core Concept and Difficulty Level} \\
+              The problem focuses on the intersection of a plane with a cube and the polygon formed by this intersection. The goal is to determine the maximum possible perimeter of such a polygon. This is appropriate for the AIME level, which requires multi-step reasoning in three dimensions.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 2: Cube and Plane Setup} \\
+              We consider a cube of edge length 1. The intersecting plane is restricted from passing through any cube vertices, ensuring the cross-section is a polygon with between 3 and 6 sides.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 3: Possible Intersections} \\
+              A plane intersecting a cube can produce polygons with 3, 4, 5, or 6 sides. To maximize perimeter, we must look for the configuration that yields the longest polygonal boundary.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 4: Quadrilateral Case} \\
+              If the intersection is a quadrilateral, the largest perimeter arises when the cross-section is a square taken through the center of the cube. In this case each side has length 1, giving perimeter:
+              \[
+              P = 4.
+              \]
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 5: Hexagon Case} \\
+              When the plane is perpendicular to a space diagonal of the cube and passes through its center, the intersection is a regular hexagon. Each side of this hexagon has length $\tfrac{\sqrt{2}}{2}$, so the perimeter is:
+              \[
+              P = 6 \cdot \tfrac{\sqrt{2}}{2} = 3\sqrt{2}.
+              \]
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 6: Conclusion} \\
+              Comparing these cases, the hexagon provides the largest possible perimeter. Therefore:
+              \[
+              \text{Maximum Perimeter} = 3\sqrt{2}.
+              \]
+  
+              \vspace{1em}
+              \textbf{Final Problem:} \\
+              A plane intersects a cube with edge length 1. The plane does not pass through any of the cube's vertices. What is the maximum possible perimeter of the polygon formed by the intersection of the plane and the cube?
+          \end{minipage}%
+      }
+      \caption{Case study of rationale and problem generation for a 3D geometry AIME-level problem.}
+      \label{fig:case_study_rationale2}
+  \end{figure}
+  
+  
+  \begin{figure}[htb]
+  \small
+      \centering
+      \fbox{%
+          \begin{minipage}{0.99\textwidth}
+              \vspace{0.5em}
+              \textbf{Foundational Concepts:}
+              \begin{enumerate}
+                  \item Understanding of basic arithmetic operations, specifically addition, and the concept of carrying in multi-digit addition
+                  \item Ability to manipulate and process arrays, including iterating through elements and performing operations on pairs of elements
+                  \item Comprehension of nested loops and their use in computing pairwise operations over a range of elements in an array
+                  \item Knowledge of modular arithmetic and digit manipulation to handle addition without carrying, focusing on individual digits
+                  \item Understanding of summation notation and the ability to compute the sum of a series of values, particularly in the context of nested summations
+              \end{enumerate}
+              
+              \vspace{1em}
+              \textbf{Rationale:}
+              
+              \noindent\textbf{Step 1: Identify the Foundational Concepts} \\
+              The problem directly draws from addition without carrying (Concept 1), array iteration (Concept 2), nested loops (Concept 3), digit-wise modular arithmetic (Concept 4), and summation notation (Concept 5).
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 2: Define the Problem Context} \\
+              A student (Tot) adds numbers digit by digit without carrying. The task is to generalize this operation to arrays and compute the total over all pairs.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 3: Problem Statement} \\
+              Given an array $a$ of length $n$, compute $\sum_{i=1}^{n}\sum_{j=i}^{n} f(a_i,a_j)$ where $f(x,y)$ is the digit-wise sum of $x$ and $y$ without carrying.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 4: Input and Output} \\
+              The input consists of multiple queries. Each query specifies $n$ and then $n$ integers. For each query, output the required double summation.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 5: Constraints} \\
+              The total $n$ across all queries is at most $10^5$, ensuring feasibility with efficient implementations.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 6: Sample Input/Output} \\
+              Verified with examples:
+              \begin{itemize}
+                  \item $f(53,19)=612$, matching digit-wise no-carry addition.
+                  \item Summations over arrays give large outputs consistent with constraints.
+              \end{itemize}
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 7: Difficulty Level} \\
+              At the Codeforces level, the challenge is balancing array operations and efficiency. A naive $O(n^2)$ summation may be too slow, so solutions must exploit structure.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 8: Logical Flow} \\
+              The reasoning starts from digit-wise addition, extends to arrays, introduces nested summations, and ensures scalability under the constraints.
+  
+              \vspace{0.5em}
+              \noindent\textbf{Step 9: Final Problem Statement} \\
+              \textit{Tot was doing homework in arithmetic. He was taught how to add two numbers, but not how to carry. For example, for $53+19$, he would do:}
+              \[
+              \begin{array}{r}
+              53 \\
+              +\,19 \\
+              \hline
+              612
+              \end{array}
+              \]
+              \textit{Tot was given an array $a$ of length $n$. He was asked to find $\sum_{i=1}^{n}\sum_{j=i}^{n} f(a_i,a_j)$, where $f(x,y)$ is the number obtained by adding $x$ and $y$ without carrying. For example, $f(53,19)=612$.}
+  
+              \vspace{0.5em}
+              \textbf{Input:} \\
+              The first line contains one integer $t$ ($1 \leq t \leq 1000$) — the number of queries. Each query begins with an integer $n$ ($1 \leq n \leq 10^5$). The next line contains $n$ integers $a_1,\dots,a_n$ ($1 \leq a_i \leq 10^9$). The total $n$ over all queries does not exceed $10^5$.
+  
+              \vspace{0.5em}
+              \textbf{Output:} \\
+              For each query, print the required sum.
+  
+          \end{minipage}%
+      }
+      \caption{Case study of rationale and problem generation for a Codeforces-level programming problem.}
+      \label{fig:case_study_rationale3}
+  \end{figure}
+  
+  
+  
