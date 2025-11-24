@@ -141,6 +141,14 @@ A well-formed math competition problem embodying the concepts.
 - Describing the problem after the fact → NO
 - Describing probability/fraction steps that never appear → NO
 
+The rationale should be a construction blueprint, not:
+
+a partial geometric explanation
+
+a solution attempt
+
+a misinterpretation of the constraints
+
 ### ❌ Problem:
 
 - Ill-posed probability questions

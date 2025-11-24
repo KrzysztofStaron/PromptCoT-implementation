@@ -1,16 +1,10 @@
 from datasets import load_dataset
 import json
-
-from typing import NamedTuple
-
-class Triplet(NamedTuple):
-    concepts: str
-    rationale: str
-    problem: str
+from openrouter import generateWithLMM
 
 
 def structureprompt() -> str:
-    return open("fixerPrompt.md", "r").read()
+    return open("fixerPrompt.md", "r", encoding="utf-8").read()
 
 def thinking_process_generation_prompt(problem, concepts, difficulty_level):
     concept_text = "\n".join(f"{i+1}. {concept}" for i, concept in enumerate(concepts))
@@ -30,10 +24,10 @@ def thinking_process_generation_prompt(problem, concepts, difficulty_level):
 
     return prompt
 
-def download_data(num_examples: int = 20000) -> list[Triplet]:
+def download_data(num_examples: int = 20000) -> list[dict]:
     dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split=f"train[:{num_examples}]")
 
-    def parse_entry(entry) -> Triplet:
+    def parse_entry(entry) -> dict:
         text = entry["completion"]
         prompt = entry["prompt"]
 
@@ -61,21 +55,42 @@ def download_data(num_examples: int = 20000) -> list[Triplet]:
         else:
             problem = ""
 
-        return {
-            "concepts": concepts,
-            "rationale": rationale,
-            "problem": problem
-        }
+        return {"concepts": concepts, "rationale": rationale, "problem": problem}
 
     parsed_data = []
     for entry in dataset:
         parsed_data.append(parse_entry(entry))
     return parsed_data
 
+def fix_data(triplet: dict) -> dict:
+    base_prompt = """
+
+Given those instructions, fix the rationale and problem to be a valid PromptCoT 2.0 triple.
+<-- BEGIN CONCEPTS -->: {} <-- END CONCEPTS -->
+<-- BEGIN RATIONALE -->: {} <-- END RATIONALE -->
+<-- BEGIN PROBLEM -->: {} <-- END PROBLEM -->
+
+Response format
+```json
+{{
+    "rationale": "The rationale for the problem",
+    "problem": "The problem"
+}}
+```
+"""
+    prompt = structureprompt() + base_prompt.format(triplet["concepts"], triplet["rationale"], triplet["problem"])
+
+
+    fixed_rationale = generateWithLMM(prompt, "openai/gpt-5", json_output=True)
+
+    return {"concepts": triplet["concepts"], "rationale": fixed_rationale["rationale"], "problem": fixed_rationale["problem"]}
+
 def main():
     dataset = download_data()
 
-    json.dump(dataset[0], open("moreData.json", "w"))
-    
+    testFixed = fix_data(dataset[0])
+
+    json.dump(testFixed, open("moreData.json", "w"))
+
 if __name__ == "__main__":
     main()
