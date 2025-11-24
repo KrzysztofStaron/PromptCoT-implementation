@@ -1,3 +1,17 @@
+from datasets import load_dataset
+import json
+
+from typing import NamedTuple
+
+class Triplet(NamedTuple):
+    concepts: str
+    rationale: str
+    problem: str
+
+
+def structureprompt() -> str:
+    return open("fixerPrompt.md", "r").read()
+
 def thinking_process_generation_prompt(problem, concepts, difficulty_level):
     concept_text = "\n".join(f"{i+1}. {concept}" for i, concept in enumerate(concepts))
     prompt = (
@@ -15,3 +29,53 @@ def thinking_process_generation_prompt(problem, concepts, difficulty_level):
     )
 
     return prompt
+
+def download_data(num_examples: int = 20000) -> list[Triplet]:
+    dataset = load_dataset("xl-zhao/PromptCoT-Problem-Generation-Dataset", split=f"train[:{num_examples}]")
+
+    def parse_entry(entry) -> Triplet:
+        text = entry["completion"]
+        prompt = entry["prompt"]
+
+        concepts_start = prompt.find("Foundational Concepts:")
+        concepts_end = prompt.find("Difficulty Level:")
+
+        if concepts_start != -1 and concepts_end != -1:
+            concepts = prompt[concepts_start + len("Foundational Concepts:"):concepts_end].strip()
+        else:
+            concepts = ""
+
+        # Extract rationale
+        rationale_start = text.find("<!-- BEGIN RATIONALE -->")
+        rationale_end = text.find("<!-- END RATIONALE -->")
+        if rationale_start != -1 and rationale_end != -1:
+            rationale = text[rationale_start + len("<!-- BEGIN RATIONALE -->"):rationale_end].strip()
+        else:
+            rationale = ""
+
+        # Extract problem
+        problem_start = text.find("<!-- BEGIN PROBLEM -->")
+        problem_end = text.find("<!-- END PROBLEM -->")
+        if problem_start != -1 and problem_end != -1:
+            problem = text[problem_start + len("<!-- BEGIN PROBLEM -->"):problem_end].strip()
+        else:
+            problem = ""
+
+        return {
+            "concepts": concepts,
+            "rationale": rationale,
+            "problem": problem
+        }
+
+    parsed_data = []
+    for entry in dataset:
+        parsed_data.append(parse_entry(entry))
+    return parsed_data
+
+def main():
+    dataset = download_data()
+
+    json.dump(dataset[0], open("moreData.json", "w"))
+    
+if __name__ == "__main__":
+    main()
