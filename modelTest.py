@@ -1,4 +1,5 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
 
 model_name = "xl-zhao/PromptCoT-Problem-Generation-Model"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
