@@ -1,0 +1,36 @@
+Given foundational concepts and difficulty level, identify connections and develop a question that integrates these concepts with appropriate complexity.
+
+Foundational Concepts:
+1. Understanding and applying the concept of the floor function, which maps a real number to the largest previous integer.
+2. Algebraic manipulation: Ability to rearrange and simplify algebraic expressions to find relationships between variables.
+3. Understanding of the concept of a weighted average to determine the calorie content per unit of the mixture.
+4. Understanding of basic probability principles, including the calculation of simple probabilities
+5. Factors and multiples: Recognizing the relationship between factors and multiples of a number.
+
+Difficulty Level: HMMT-Nov
+
+<!-- BEGIN RATIONALE -->1. **Conceptual Foundation and Difficulty Level Setting:**
+   - The problem aims to integrate several mathematical concepts, including the floor function, algebraic manipulation, weighted averages, and basic probability principles. The goal is to create a problem that is challenging enough for the HMMT-Nov competition, which typically requires deep understanding and creative application of these concepts.
+
+2. **Choosing the Context:**
+   - To make the problem engaging and relatable, a real-world context is chosen: making lemonade. This context naturally involves mixing different ingredients (lemons and sugar) in varying proportions, which can be used to introduce the concept of weighted averages.
+
+3. **Introducing the Floor Function:**
+   - The floor function is a key concept that adds complexity to the problem. It is introduced through the variable $x$, which is defined as the floor of the ratio of the number of lemons to the total number of fruits. This introduces the idea of rounding down to the nearest integer, which is a common and interesting mathematical operation.
+
+4. **Formulating the Weighted Average:**
+   - The weighted average of the calorie content of the fruits is introduced through the expression $\frac{x}{N} \left(\text{calories per lemon} + \frac{2015 - x}{N} \cdot \text{calories per sugar cube}\right)$. This expression is designed to reflect the weighted average of the calories from lemons and sugar cubes, where the weight of each fruit is proportional to the number of fruits in the mixture.
+
+5. **Incorporating Probability:**
+   - The problem involves calculating the probability that the weighted average of the calorie content is an integer. This requires understanding the conditions under which the weighted average of the calories from lemons and sugar cubes results in an integer. This is a non-trivial task that requires careful algebraic manipulation and understanding of the floor function.
+
+6. **Simplifying the Problem:**
+   - To make the problem solvable within the constraints of the competition, the number of fruits $N$ is set to 2015, and the number of lemons $n$ is chosen to be a random integer between 1 and 2014. This simplification allows for a clear and focused problem statement while still requiring deep mathematical insight to solve.
+
+7. **Finalizing the Problem Statement:**
+   - The problem statement is crafted to clearly define the variables, the context, and the specific mathematical task to be solved. The goal is to find the probability that the weighted average of the calorie content is an integer, which requires understanding the floor function, algebraic manipulation, and basic probability principles.
+
+8. **Ensuring the Problem is Solvable:**
+   - The problem is designed to be solvable with a deep understanding of the foundational concepts. The solution involves recognizing that the weighted average of the calories from lemons and sugar cubes will be an integer if the number of lemons $x$ is such that the floor function of the ratio of the number of lemons to the total number of fruits results in an integer. This requires careful algebraic manipulation and understanding of the floor function.
+
+By following these steps, the problem is designed to challenge students' understanding of the floor function, algebraic manipulation, weighted averages, and basic probability principles, making it suitable for the HMMT-Nov competition.<!-- END RATIONALE --><!-- BEGIN PROBLEM -->Meghana is making lemonade. She has $N$ fruits, each of which is either a lemon or a sugar cube. She places $x$ of the fruits into a large bowl, where $x$ is an integer between 1 and $N-1$, inclusive. She then computes the weighted average of the calorie content of the fruits in the bowl. (The calorie content of a lemon is 25 calories, and the calorie content of a sugar cube is 2015 calories.) Meghana notices that the weighted average of the calorie content is an integer. What is the probability that this is the case?<!-- END PROBLEM -->

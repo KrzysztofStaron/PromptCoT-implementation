@@ -1,0 +1,43 @@
+Given foundational concepts and difficulty level, identify connections and develop a question that integrates these concepts with appropriate complexity.
+
+Foundational Concepts:
+1. Ability to apply quantitative reasoning and estimation techniques to solve problems, including making approximations and using logical deductions to arrive at a solution.
+2. Ability to solve equations involving complex numbers, including finding conditions under which two complex numbers are equal, particularly in the context of their magnitudes and arguments.
+3. Fractional arithmetic: Performing calculations with fractions to determine the final probability.
+4. Interpreting and solving problems involving nested operations or functions.
+5. Using logical reasoning to connect given data points and derive conclusions.
+
+Difficulty Level: HMMT-Feb<!-- BEGIN RATIONALE -->**Step 1: Selecting Foundational Concepts and Difficulty Level**
+The problem designer starts by selecting the foundational concepts and the desired difficulty level. In this case, the concepts are: 
+1. Quantitative reasoning and estimation techniques, 
+2. Solving equations involving complex numbers, 
+3. Fractional arithmetic, 
+4. Interpreting and solving problems involving nested operations or functions, and 
+5. Using logical reasoning to connect given data points and derive conclusions. 
+The difficulty level is HMMT-Feb, which suggests a challenging problem that requires a combination of mathematical techniques and logical reasoning.
+
+**Step 2: Identifying Key Mathematical Techniques**
+The designer identifies the key mathematical techniques that will be required to solve the problem. For this problem, the key techniques are:
+- Estimating the number of complex numbers with a given magnitude and argument
+- Solving equations involving complex numbers, particularly in the context of their magnitudes and arguments
+- Performing fractional arithmetic to determine the final probability
+
+**Step 3: Designing the Problem Framework**
+The designer creates a framework for the problem by introducing the concept of a "complex number $z$ with $|z|=1$ and $\arg(z)=\frac{2k\pi}{2019}$ for $1 \leq k \leq 2018$." This framework provides a clear context for the problem and allows the designer to incorporate the key mathematical techniques.
+
+**Step 4: Introducing the Problem's Objective**
+The designer introduces the objective of the problem: to find the probability that a randomly chosen complex number $z$ satisfies a certain condition. This objective requires the use of quantitative reasoning and estimation techniques, as well as the ability to solve equations involving complex numbers.
+
+**Step 5: Creating the Condition**
+The designer creates the condition that the complex number $z$ must satisfy. In this case, the condition is that there exists a $k$ such that $z=\frac{1}{1+z+z^{2}}$. This condition requires the use of the key mathematical techniques, including solving equations involving complex numbers and performing fractional arithmetic.
+
+**Step 6: Ensuring the Problem's Difficulty Level**
+The designer ensures that the problem meets the desired difficulty level by making the condition complex enough to require a combination of mathematical techniques, but not so complex that it becomes unsolvable. The designer also considers the number of possible values for $k$ and how this affects the probability.
+
+**Step 7: Finalizing the Problem**
+The designer finalizes the problem by specifying the probability as a fraction $\frac{a}{b}$, where $a$ and $b$ are relatively prime positive integers. This requires the use of fractional arithmetic and allows the designer to ensure that the problem has a unique solution.
+
+**Step 8: Verifying the Solution**
+The designer verifies that the problem has a unique solution and that the solution can be obtained using the key mathematical techniques. The designer also checks that the problem meets the desired difficulty level and that the solution requires a combination of mathematical techniques and logical reasoning.
+
+By following these steps, another teacher can recreate the identical problem using only the foundational concepts and difficulty level. The thinking process is natural and logical, and the problem design is precise and detailed.<!-- END RATIONALE --><!-- BEGIN PROBLEM -->Let $z$ be a complex number with $|z|=1$ and $\arg(z)=\frac{2 k \pi}{2019}$ for $1 \leq k \leq 2018$. The probability that there exists a $k$ such that $z=\frac{1}{1+z+z^{2}}$ can be written as $\frac{a}{b}$, where $a$ and $b$ are relatively prime positive integers. Compute $100 a+b$.<!-- END PROBLEM -->
