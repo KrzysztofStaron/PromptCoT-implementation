@@ -1,10 +1,16 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+import torch
 import threading
 
-# 32B model
+# 33B mode, BF16
 model_name = "xl-zhao/PromptCoT-2.0-Prompt-Generation-Model"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    device_map="cuda",
+    torch_dtype=torch.bfloat16,
+    low_cpu_mem_usage=True
+)
 
 concept_text = "graph traversal, recursion, dynamic programming"
 level = "codeforces"
@@ -16,7 +22,8 @@ Foundational Programming Concepts:
 
 Difficulty Level: {level}"""
 
-inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+device = next(model.parameters()).device
+inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
 # Create streamer for streaming output
 streamer = TextIteratorStreamer(tokenizer, skip_special_tokens=True)
@@ -25,7 +32,8 @@ streamer = TextIteratorStreamer(tokenizer, skip_special_tokens=True)
 generation_kwargs = dict(
     **inputs,
     streamer=streamer,
-    max_length=4096,
+    max_new_tokens=2048,
+    do_sample=True,
     temperature=0.7
 )
 thread = threading.Thread(target=model.generate, kwargs=generation_kwargs)
