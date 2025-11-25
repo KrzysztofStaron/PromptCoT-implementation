@@ -206,3 +206,11 @@ python train_phase2_em.py [--k K] [--no-upload]
 **Requirements**: See `requirements.txt`
 
 **Hardware**: Recommended H200 GPU (141GB VRAM) or similar high-memory GPU for Phase 2
+
+OK NOTES FOR ME:
+
+fixando.md consists of a fixer prompt for a highly-capable model to improve the model, by ensuring x,c, z are deeply connected, making EM loop more effective
+
+what we doing now?
+
+- Reinforcement learning of a small Quen model to improve it's coding capabilities

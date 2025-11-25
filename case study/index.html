@@ -269,12 +269,15 @@
         A 7B model struggles to maintain reasoning fidelity at this difficulty level, and the current runs demonstrate
         that limitation clearly. Scaling up parameter count could help, but it's not the most actionable step.
       </p>
-      <h4>There is still hope</h4>
+      <h4>It works, just not as good, as it could</h4>
+      <p>Even so, what I've built is not near being perfect, it's far from failure.</p>
       <p>
-        Even so even authors failed to make this step improssive, there is a chance for improvement after proper data
-        alignment and model scaling. There is also a great chance model tained on the synthic data will perform better
-        at benchmarks than base model of the same size, even so the questions aren't actually olympiad-level, what can
-        be improved upon anyways
+        Nothing is stopping anyone, from runnning train_phase2_em.py with BASE_NUM_TRIPLETS closer to full dataset size,
+        or increasing EM_ITERS and k.
+      </p>
+      <p>
+        It's working at smaller scale, but I'm not sure if it's worth the effort to scale it up. That's why I'm going to
+        focus on the next step.
       </p>
     </div>
 
@@ -295,12 +298,12 @@
       <h2>Personal Perspective</h2>
       <p>
         I’ve been on this project for a month straight. First time implementing a research paper from scratch. Learned a
-        ton. The results aren’t pretty, but I don’t care—I shipped it and I know exactly why it broke.
+        lot about LLMs.
       </p>
       <p>
-        Moving massive datasets around nearly killed me. Code crashed constantly. LoRA and GPU-utilization optimization
-        were a new experience for me. All of my errors came from infrastructure, not the actual model what really
-        suprising. It feels like infra and data preprocessing is more important than the actual model itself.
+        Moving massive datasets around was a pain. Code crashed constantly. LoRA and GPU-utilization optimization were a
+        new experience for me. All of my errors came from infrastructure, not the actual model what really suprising. It
+        feels like infra and data preprocessing is more important than the actual model itself.
       </p>
       <p>
         ML is expensive and I’m not rich. Every mistake cost me weeks of tutoring money and part-time hours. I paid it
@@ -312,16 +315,7 @@
         the gym, and pushing through being sick. 90-100 hours a week, every week.
       </p>
       <p>
-        Next round will be cleaner, more hardcoded, and more reliable. I’m already stacking the cash for the next round.
-      </p>
-    </div>
-
-    <div class="section">
-      <h2>Conclusion</h2>
-      <p>
-        Authors of PromptCoT 2.0 Never accualy managed to train relaible problem generation model, but it's good enough
-        to generate problems that are somewhat challenging for LLMs. But the promise of paper was overhyped, even author
-        had different results than paper assumed.
+        Next round will be cleaner, more hardcore and more reliable. I’m already stacking the cash for the next round.
       </p>
     </div>
 
