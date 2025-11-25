@@ -207,10 +207,10 @@ python train_phase2_em.py [--k K] [--no-upload]
 
 **Hardware**: Recommended H200 GPU (141GB VRAM) or similar high-memory GPU for Phase 2
 
-OK NOTES FOR ME:
+## Notes
 
-fixando.md consists of a fixer prompt for a highly-capable model to improve the model, by ensuring x,c, z are deeply connected, making EM loop more effective
+- `fixando.md` contains a robust prompt designed to "fix" dataset triples (concepts, rationale, problem) into a deeply aligned, EM-friendly structure. This ensures that each triple is tightly connected, which is critical for the success of the EM loop in synthetic dataset generation.
 
-what we doing now?
+## Current Focus
 
-- Reinforcement learning of a small Quen model to improve it's coding capabilities
+- Performing reinforcement learning on a compact Qwen model to enhance its performance, particularly in structured reasoning and code generation tasks.
